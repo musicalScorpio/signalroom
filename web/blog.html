@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agents are becoming less dependent on humans — SignalRoom</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23171815'/%3E%3Cpath d='M13 42h8V29h-8zm15 0h8V14h-8zm15 0h8V23h-8z' fill='%23d7ff55'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
@@ -33,6 +34,10 @@
         <p>The safest first deployment is not full automation. It is shadow mode: let the agent observe real events, assemble context, propose an action, and withhold the side effect. Then compare the proposal with what people actually did.</p>
         <p>Measure useful interventions, false interruptions, escalation rate, duplicate suppression, time recovered, and whether an uninvolved reviewer can reconstruct the decision from the event record. These measures tell you more than a generic model benchmark because they test the whole socio-technical path.</p>
         <p>Trust should not be a feeling produced by a polished demo. It should be an accumulation of evidence that the system notices the right moments, respects its boundaries, and improves outcomes without manufacturing unnecessary work.</p>
+        <h2>Durability changes what autonomy means</h2>
+        <p>An agent that can make a decision but loses its place during a deployment or a two-day approval wait is not autonomous. It is merely unattended.</p>
+        <p>Persisted memory can tell a replacement process what the agent knew. Durable execution tells it where the work stood: which context was gathered, which decision was already made, which approval is still pending, and whether a real-world action may have happened. That distinction matters whenever the agent touches something that cannot safely be repeated.</p>
+        <p>The workflow should also remain open after an action is dispatched. “Ticket created” is an execution result, not a business outcome. The outcome arrives later: the customer was answered before the SLA, the service recovered, the asset returned to policy range, or the compliance review found a violation. An event-driven agent becomes accountable when its record connects the original signal to that later evidence.</p>
         <h2>The durable advantage is organizational</h2>
         <p>Models will continue to improve and become easier to run locally. The scarcer capability will be organizational: knowing which events matter, where the necessary context lives, which actions are reversible, who owns exceptions, and how success will be measured.</p>
         <p>That is the deeper shift. Agents are becoming less dependent on people to begin work. Organizations will become more dependent on people to design the rules by which work begins.</p>

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="SignalRoom is an open-source control room for event-driven ambient agents.">
   <title>SignalRoom — Ambient agents, accountable outcomes</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23171815'/%3E%3Cpath d='M13 42h8V29h-8zm15 0h8V14h-8zm15 0h8V23h-8z' fill='%23d7ff55'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -17,7 +18,7 @@
       <span class="brand-mark"><i></i><i></i><i></i></span>
       <span>SignalRoom</span>
     </a>
-    <p class="tagline">ambient agents, accountable outcomes</p>
+    <p class="tagline"><span class="runtime-dot"></span><span id="runtime-indicator">checking runtime</span></p>
     <div class="header-actions">
       <label class="mode-control" for="run-mode">
         <span class="live-dot"></span>
@@ -87,6 +88,16 @@
               <button class="button button-primary" id="approve-button">Approve action</button>
             </div>
           </div>
+          <div class="outcome-box" id="outcome-box">
+            <div class="outcome-head"><span>Business outcome</span><strong id="outcome-state">Awaiting evidence</strong></div>
+            <p id="outcome-question"></p>
+            <div id="outcome-result" class="outcome-result" hidden></div>
+            <div id="outcome-report">
+              <label><span id="outcome-metric-label">Outcome metric</span><input id="outcome-metric" type="number" min="0" value="12"></label>
+              <label><span>Evidence note</span><input id="outcome-note" value="External system confirmed the result"></label>
+              <div id="outcome-choices" class="outcome-choices"></div>
+            </div>
+          </div>
           <div class="feedback-row">
             <span>Was this intervention useful?</span>
             <div><button data-rating="useful" aria-label="Mark useful">Useful</button><button data-rating="noise" aria-label="Mark as noise">Noise</button></div>
@@ -98,15 +109,15 @@
         <div class="panel-heading">
           <div><p class="eyebrow"><span>05</span> Shadow score</p><h2 id="score-title">Is it helping?</h2></div>
         </div>
-        <p class="score-intro">The goal is not maximum activity. It is fewer, better interventions.</p>
-        <div class="score-main"><strong id="utility-score">—</strong><span>utility<br>signal</span></div>
+        <p class="score-intro">Recommendations are not outcomes. This score uses completed business results.</p>
+        <div class="score-main"><strong id="outcome-score">—</strong><span>outcome<br>success</span></div>
         <div class="metric-list">
-          <div><span>Useful interventions</span><strong id="metric-useful">0</strong></div>
-          <div><span>False interruptions</span><strong id="metric-noise">0</strong></div>
-          <div><span>Human escalations</span><strong id="metric-escalations">0</strong></div>
-          <div><span>Observed in shadow</span><strong id="metric-shadowed">0</strong></div>
+          <div><span>Completed outcomes</span><strong id="metric-completed">0</strong></div>
+          <div><span>Successful outcomes</span><strong id="metric-successful">0</strong></div>
+          <div><span>Awaiting evidence</span><strong id="metric-pending">0</strong></div>
+          <div><span>Unsuccessful outcomes</span><strong id="metric-failed">0</strong></div>
         </div>
-        <p class="score-note">A quiet agent can be a successful agent. “No action” belongs in the audit record too.</p>
+        <p class="score-note">Execution and business impact are separate facts. Temporal keeps the case open until outcome evidence arrives.</p>
       </aside>
     </section>
 
@@ -120,7 +131,7 @@
   <dialog id="event-dialog">
     <form id="event-form" method="dialog">
       <div class="dialog-head"><div><p class="eyebrow">Simulate a change</p><h2>Inject an event</h2></div><button type="button" id="close-dialog" aria-label="Close">×</button></div>
-      <label>Event type<select name="type"><option value="deploy.failed">Deployment failed</option><option value="workflow.stalled">Workflow stalled</option><option value="threshold.breached">Threshold breached</option><option value="document.uploaded">Document uploaded</option><option value="support.sla_risk">Support SLA risk</option></select></label>
+      <label>Event type<select name="type"><option value="workflow.stalled">Workflow stalled</option><option value="deploy.failed">Deployment failed</option><option value="threshold.breached">Threshold breached</option><option value="document.uploaded">Document uploaded</option><option value="support.sla_risk">Support SLA risk</option></select></label>
       <label>Source<input name="source" value="demo.system" required></label>
       <label>What changed?<textarea name="summary" rows="3" required>Payment reconciliation has been stalled for 61 minutes</textarea></label>
       <div class="dialog-actions"><button type="button" class="button button-ghost" id="cancel-dialog">Cancel</button><button type="submit" class="button button-primary">Send to signal bus</button></div>

@@ -1,133 +1,185 @@
 # SignalRoom
 
-**Ambient agents, accountable outcomes.**
+**Ambient agents, durable execution, accountable outcomes.**
 
-SignalRoom is an open-source control room for agents that begin with an event rather than a chat prompt. It demonstrates a complete event-to-outcome path:
+SignalRoom is an open-source control room for agents that begin with an event instead of a chat prompt. Each event becomes a durable Temporal Workflow:
 
 ```text
-event → context snapshot → policy check → agent action → human exception → outcome → feedback
+event → validation → context → policy → proposed action → human exception
+      → execution result → business outcome → feedback
 ```
 
-The working prototype includes a durable SQLite event ledger, duplicate-event suppression, three autonomy modes, approval and rejection flows, replayable traces, outcome feedback, and an optional local Qwen model through Ollama. It has no required Python packages or paid APIs.
+The important distinction is that an agent recommendation is not an outcome. SignalRoom records three separate facts:
 
-## Why this exists
+1. **Decision:** what the agent recommended and why.
+2. **Execution:** whether an idempotent side effect actually occurred.
+3. **Business outcome:** what changed afterward, according to the source system.
 
-Agents are becoming less dependent on human initiation. That should not make them less accountable to human policy.
+## What is durable
 
-SignalRoom treats the model as one probabilistic component inside a deterministic operating path. Policy remains in code. Risky or irreversible actions cross a visible authority boundary. Every decision—including “observe only”—is stored as an event record.
+Temporal owns workflow execution state. If a Worker stops during context gathering, approval or outcome observation, another Worker reconstructs the case from Event History and resumes at the unfinished step. Completed model calls and Activities are not repeated during replay.
 
-This is intentionally not another chat interface or general-purpose agent framework. It is a small proving ground for a harder question: **did this event deserve an intervention, and can we prove the intervention helped?**
+SQLite is the UI projection and analytics store. The downstream system remains the source of truth for real-world effects. This separation prevents a model response from being mistaken for a completed business result.
 
-## Run it
+The implementation includes:
 
-Requirements: Python 3.9 or newer.
+- Temporal Workflow per event, with Workflow-ID deduplication
+- Durable human approval and outcome waits
+- Idempotent action Activities with stable effect references
+- Explicit outcome contracts for every supported signal
+- Signal type/description conflict detection
+- Shadow, guarded and autonomous modes
+- Optional local Qwen3-4B inference through Ollama
+- Local fallback mode when Temporal is unavailable
+- Replayable UI trace and outcome scorecard
+
+## Quick start
+
+Requirements:
+
+- Docker-compatible runtime
+- [uv](https://github.com/astral-sh/uv)
 
 ```bash
-python3 server.py
+chmod +x scripts/dev.sh
+./scripts/dev.sh
 ```
 
-Open [http://127.0.0.1:4173](http://127.0.0.1:4173).
+Open:
 
-The default uses a transparent deterministic decision engine, so the demo works immediately and offline.
+- SignalRoom: [http://127.0.0.1:4173](http://127.0.0.1:4173)
+- Temporal Web UI: [http://127.0.0.1:8233](http://127.0.0.1:8233)
+
+The script starts the local Temporal development service, installs the locked Python environment, starts a Temporal Worker and runs the SignalRoom server. Stop SignalRoom with `Ctrl-C`. The Temporal container remains available for the next run.
+
+If an older SignalRoom server is still using port 4173, stop it with `Ctrl-C` before starting this version.
+
+### Run the processes separately
+
+```bash
+docker run -d --name signalroom-temporal \
+  -p 7233:7233 -p 8233:8233 \
+  temporalio/temporal:latest server start-dev --ip 0.0.0.0
+
+uv sync
+uv run python worker.py
+```
+
+In another terminal:
+
+```bash
+uv run python server.py
+```
 
 ### Use a fully local model
 
-[Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) is distributed under Apache 2.0. Run it locally with [Ollama](https://github.com/ollama/ollama):
+[Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) is Apache-2.0 licensed. Run it through [Ollama](https://github.com/ollama/ollama):
 
 ```bash
 ollama pull qwen3:4b
-SIGNALROOM_MODEL=ollama OLLAMA_MODEL=qwen3:4b python3 server.py
+SIGNALROOM_MODEL=ollama OLLAMA_MODEL=qwen3:4b ./scripts/dev.sh
 ```
 
-Optional environment variables:
+If Ollama is unavailable, the Worker safely falls back to the transparent rules engine and records that fallback in the decision.
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `SIGNALROOM_MODEL` | `rules` | Set to `ollama` to use a local model |
-| `OLLAMA_MODEL` | `qwen3:4b` | Local Ollama model name |
-| `OLLAMA_URL` | `http://127.0.0.1:11434/api/chat` | Ollama chat endpoint |
+## Outcome contracts
 
-If Ollama is unavailable, SignalRoom safely falls back to the transparent rules engine and records that fallback in the decision.
+Every supported signal defines what evidence closes the Workflow:
 
-## What to try
+| Signal | Outcome question | Successful result | Unsuccessful result | Metric |
+| --- | --- | --- | --- | --- |
+| `workflow.stalled` | Did the workflow recover before its SLA? | Workflow resumed | SLA breached | Minutes to recovery |
+| `threshold.breached` | Was the asset stabilized? | Asset stabilized | Incident confirmed | Minutes outside threshold |
+| `document.uploaded` | What did compliance conclude? | Cleared review | Policy violation | Minutes to review |
+| `support.sla_risk` | Was the customer answered in time? | SLA avoided | SLA breached | Minutes before deadline |
+| `deploy.failed` | Did the service recover? | Service recovered | Recovery failed | Minutes to recovery |
 
-1. Open a seeded event and inspect its event-to-outcome trace.
-2. Rate the recommendation as useful or noise. The shadow score updates immediately.
-3. Switch from **Shadow** to **Guarded** mode and inject a medium-risk event. It will pause for approval.
-4. Switch to **Autonomous** mode and inject a low-risk document event. It will act within delegated authority.
-5. Submit the same event ID through the API twice. The second delivery returns the original event instead of causing a second action.
-
-Example event:
-
-```bash
-curl -X POST http://127.0.0.1:4173/api/events \
-  -H 'content-type: application/json' \
-  -d '{
-    "id": "evt_demo_001",
-    "type": "workflow.stalled",
-    "source": "finance.close",
-    "summary": "Month-end reconciliation is 61 minutes past its SLA",
-    "payload": {"workflow": "close", "stalled_minutes": 61}
-  }'
-```
+The UI can report these results for demonstration. In production, the same endpoint is called by webhooks or event consumers from the actual system of record.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  P[Event producers] -->|HTTP event| I[Idempotent intake]
-  I --> L[(SQLite event ledger)]
-  I --> C[Context snapshot]
-  C --> R{Policy boundary}
-  R --> M[Rules or local Qwen model]
-  M --> S{Run mode}
-  S -->|shadow| O[Observe only]
-  S -->|within authority| A[Dispatch action]
-  S -->|exception| H[Human approval]
-  O --> L
-  A --> L
-  H --> L
-  L --> F[Outcome feedback]
+  P[Event producer] --> API[SignalRoom intake]
+  API -->|Workflow ID = event ID| T[Temporal Workflow]
+  T --> V[Validate signal]
+  V --> C[Context Activities]
+  C --> M[Rules or local Qwen Activity]
+  M --> G{Policy boundary}
+  G -->|exception| H[Durable approval wait]
+  G -->|delegated| A[Idempotent action Activity]
+  H --> A
+  A --> E[Effect system of record]
+  E -->|outcome event| T
+  T --> O[(SQLite projection)]
+  O --> UI[Control room]
 ```
 
-The model recommends; the policy layer decides whether that recommendation may become an action. This separation is the core design choice.
+All network calls, model inference, database lookups and external actions are Activities. Workflow code contains deterministic orchestration and durable waits.
+
+## Durability demonstration
+
+1. Select **Guarded mode**.
+2. Inject a `threshold.breached` signal.
+3. Confirm it reaches **Approval needed**.
+4. Stop `worker.py` while the Workflow is waiting.
+5. Start `worker.py` again.
+6. Approve the action in SignalRoom.
+7. Report `Asset stabilized` as the external outcome.
+
+The Workflow resumes from its recorded approval wait, dispatches the action once and closes only when business-outcome evidence arrives.
 
 ## API
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/events` | List the event ledger |
-| `POST` | `/api/events` | Ingest and evaluate an event |
-| `GET` | `/api/events/:id` | Read one complete event record |
-| `POST` | `/api/events/:id/approve` | Approve a pending action |
-| `POST` | `/api/events/:id/reject` | Reject a pending action |
-| `POST` | `/api/events/:id/feedback` | Mark an intervention useful or noisy |
-| `POST` | `/api/config` | Set `shadow`, `guarded`, or `autonomous` mode |
-| `GET` | `/api/metrics` | Read the shadow-mode scorecard |
+| `GET` | `/api/runtime` | Show Temporal connection state |
+| `GET` | `/api/events` | List projected event cases |
+| `POST` | `/api/events` | Start a durable event Workflow |
+| `GET` | `/api/events/:id` | Read one event-to-outcome record |
+| `POST` | `/api/events/:id/approve` | Signal approval to a waiting Workflow |
+| `POST` | `/api/events/:id/reject` | Signal rejection to a waiting Workflow |
+| `POST` | `/api/events/:id/outcome` | Report event-specific business evidence |
+| `POST` | `/api/events/:id/feedback` | Rate the intervention as useful or noisy |
+| `POST` | `/api/config` | Set `shadow`, `guarded` or `autonomous` mode |
+| `GET` | `/api/metrics` | Read completed and pending outcome metrics |
+
+Example outcome report:
+
+```bash
+curl -X POST http://127.0.0.1:4173/api/events/evt_demo/outcome \
+  -H 'content-type: application/json' \
+  -d '{
+    "code": "workflow_resumed",
+    "note": "The owner cleared a locked journal",
+    "metrics": {"recovery_time_minutes": 12}
+  }'
+```
 
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests -v
+uv run python -m unittest discover -s tests -v
 ```
 
-## Design notes
+The suite verifies idempotent intake and action execution, policy boundaries, mismatched-signal rejection, and terminal business results for all five signal types.
 
-- **Shadow is the default.** A new deployment should earn the right to cause side effects.
-- **Idempotency comes before intelligence.** Duplicate delivery must not become duplicate action.
-- **Context is a timestamped snapshot.** The event alone is rarely enough to justify action.
-- **Authority is explicit.** Risk and reversibility determine when a person becomes necessary.
-- **Silence is measurable.** “No side effect” is preserved as an outcome, not lost as missing data.
-- **Feedback closes the loop.** Utility and false interruption matter more than raw agent activity.
+## Operating principles
 
-## Research signals
+- **Shadow is the default.** A deployment earns the right to cause side effects.
+- **Durability is execution state, not memory.** A new Worker resumes the decision already made.
+- **Idempotency comes before intelligence.** Retries must not create repeated effects.
+- **Recommendation, execution and impact are different facts.** The UI names each one.
+- **Invalid signals stop early.** A type/description conflict cannot reach the model or tools.
+- **The Workflow stays open for evidence.** Activity is not counted as success.
 
-SignalRoom was inspired by converging platform and research patterns:
+## Open-source stack
 
-- [AWS: ambient agents from event-driven signals to human-in-the-loop workflows](https://aws.amazon.com/blogs/machine-learning/building-ambient-agents-with-amazon-bedrock-agentcore-from-event-driven-signals-to-human-in-the-loop-workflows/)
-- [OpenAI: agent session lifecycle webhooks](https://developers.openai.com/api/docs/guides/agents-api/sessions/webhooks)
-- [MLflow: event-driven agent architecture and production operations](https://mlflow.org/articles/event-driven-agents/)
-- [Autonomous Event-Driven Multi-Agent Orchestration for Enterprise AI at Scale](https://arxiv.org/abs/2606.20058)
+- SignalRoom: Apache License 2.0
+- Temporal Server and SDK: MIT
+- Qwen3-4B: Apache License 2.0
+- Ollama: MIT
+- SQLite: public domain
 
 The companion essay is available as [BLOG.md](BLOG.md) and inside the running app at `/blog.html`.
 

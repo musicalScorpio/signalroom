@@ -40,6 +40,14 @@ Measure useful interventions, false interruptions, escalation rate, duplicate su
 
 Trust should not be a feeling produced by a polished demo. It should be an accumulation of evidence that the system notices the right moments, respects its boundaries, and improves outcomes without manufacturing unnecessary work.
 
+## Durability changes what autonomy means
+
+An agent that can make a decision but loses its place during a deployment or a two-day approval wait is not autonomous. It is merely unattended.
+
+Persisted memory can tell a replacement process what the agent knew. Durable execution tells it where the work stood: which context was gathered, which decision was already made, which approval is still pending, and whether a real-world action may have happened. That distinction matters whenever the agent touches something that cannot safely be repeated.
+
+The workflow should also remain open after an action is dispatched. “Ticket created” is an execution result, not a business outcome. The outcome arrives later: the customer was answered before the SLA, the service recovered, the asset returned to policy range, or the compliance review found a violation. An event-driven agent becomes accountable when its record connects the original signal to that later evidence.
+
 ## The durable advantage is organizational
 
 Models will continue to improve and become easier to run locally. The scarcer capability will be organizational: knowing which events matter, where the necessary context lives, which actions are reversible, who owns exceptions, and how success will be measured.
