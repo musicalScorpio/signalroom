@@ -98,21 +98,47 @@ The UI can report these results for demonstration. In production, the same endpo
 
 ## Architecture
 
+The versioned Mermaid source is available at [`docs/signalroom-architecture.mmd`](docs/signalroom-architecture.mmd).
+
 ```mermaid
 flowchart LR
-  P[Event producer] --> API[SignalRoom intake]
-  API -->|Workflow ID = event ID| T[Temporal Workflow]
-  T --> V[Validate signal]
-  V --> C[Context Activities]
-  C --> M[Rules or local Qwen Activity]
-  M --> G{Policy boundary}
-  G -->|exception| H[Durable approval wait]
-  G -->|delegated| A[Idempotent action Activity]
-  H --> A
-  A --> E[Effect system of record]
-  E -->|outcome event| T
-  T --> O[(SQLite projection)]
-  O --> UI[Control room]
+    subgraph client ["Event and Human Interfaces"]
+        eventSources["Enterprise Events and Outcome Webhooks"]
+        controlRoom["SignalRoom Control Room"]
+    end
+    subgraph gateway ["Ingress"]
+        api["SignalRoom API"]
+    end
+    subgraph service ["Durable Agent Services"]
+        workflowClient["Temporal Workflow Client"]
+        worker["SignalRoom Temporal Worker"]
+        decision["Policy and Local Model Activities"]
+        effects["Idempotent Action Activities"]
+        projector["Projection and Metrics"]
+    end
+    subgraph datastore ["State and Projections"]
+        sqlite["SQLite Projection"]
+    end
+    subgraph external ["Model and Effect Systems"]
+        ollama["Ollama with Qwen3"]
+        effectTargets["Business Effect APIs"]
+    end
+    subgraph async ["Durable Orchestration"]
+        temporal["Temporal Service and Event History"]
+    end
+
+    eventSources -->|"Events and outcomes"| api
+    controlRoom -->|"Approval and review"| api
+    api -->|"Starts and signals"| workflowClient
+    api -->|"Reads views"| projector
+    workflowClient -.->|"Starts workflows"| temporal
+    temporal -.->|"Dispatches and records"| worker
+    worker -->|"Requests decisions"| decision
+    decision -.->|"Ollama: Local inference"| ollama
+    worker -->|"Executes once"| effects
+    effects -.->|"Effect APIs: Actions"| effectTargets
+    worker -->|"Projects state"| projector
+    projector -->|"Reads and writes"| sqlite
 ```
 
 All network calls, model inference, database lookups and external actions are Activities. Workflow code contains deterministic orchestration and durable waits.
