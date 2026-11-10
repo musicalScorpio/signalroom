@@ -1,6 +1,6 @@
 const state = {
   events: [], selected: null, mode: "shadow", runtime: "unknown",
-  runtimeInfo: null, activeStage: null, demoRunning: false,
+  runtimeInfo: null, activeStage: null, demoRunning: false, demoAvailable: false,
 };
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -179,7 +179,13 @@ function renderRuntime(runtime) {
   const count = worker.restart_count || 0;
   $("#restart-count").textContent = `${count} restart${count === 1 ? "" : "s"}`;
   $("#runtime-indicator").textContent = runtime.temporal_connected ? `Temporal connected · Worker ${worker.status || "unknown"}` : "Local fallback runtime";
-  $("#durability-demo-button").disabled = state.demoRunning || !runtime.temporal_connected || !runtime.chaos_demo_enabled || worker.status !== "online";
+  state.demoAvailable = Boolean(runtime.temporal_connected && runtime.chaos_demo_enabled && worker.status === "online");
+  const demoButton = $("#durability-demo-button");
+  demoButton.disabled = state.demoRunning;
+  demoButton.classList.toggle("demo-unavailable", !state.demoAvailable);
+  demoButton.innerHTML = state.demoAvailable
+    ? '<span class="demo-button-dot"></span>Run crash + resume demo'
+    : '<span class="demo-button-dot"></span>Why is the demo unavailable?';
 }
 
 function selectEvent(id) {
@@ -217,6 +223,20 @@ function setDemoSteps(steps, activeIndex = -1, failedIndex = -1) {
 
 async function runDurabilityDemo() {
   if (state.demoRunning) return;
+  if (!state.demoAvailable) {
+    const consoleBox = $("#demo-console");
+    consoleBox.hidden = false;
+    $("#demo-console-status").textContent = "Temporal runtime unavailable";
+    const requirements = [
+      "Stop the fallback server currently using port 4173",
+      "Run ./scripts/dev.sh from the SignalRoom directory",
+      "Wait for Temporal connected and Agent Worker online",
+      "Click Run crash + resume demo again",
+    ];
+    setDemoSteps(requirements, -1, 0);
+    showToast("Crash recovery requires Temporal and the supervised Worker. Start SignalRoom with ./scripts/dev.sh.");
+    return;
+  }
   state.demoRunning = true;
   const consoleBox = $("#demo-console");
   consoleBox.hidden = false;
