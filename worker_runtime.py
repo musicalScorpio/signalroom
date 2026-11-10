@@ -10,6 +10,7 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+INSTANCE_ID = "signalroom-local"
 RUNTIME_DIR = PROJECT_ROOT / ".signalroom"
 WORKER_STATE_PATH = RUNTIME_DIR / "worker-state.json"
 

@@ -3,6 +3,34 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PROJECT_DIR"
+PORT="${SIGNALROOM_PORT:-4173}"
+
+# A previous fallback server can survive after its Worker has stopped and keep
+# the demo port occupied. Replace only a process that identifies as SignalRoom;
+# never terminate an unrelated application using the same port.
+PORT_PID="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | sed -n '1p')"
+if [[ -n "$PORT_PID" ]]; then
+  RUNTIME_RESPONSE="$(curl --max-time 1 -fsS "http://127.0.0.1:$PORT/api/runtime" 2>/dev/null || true)"
+  if [[ "$RUNTIME_RESPONSE" == *'"instance_id": "signalroom-local"'* || "$RUNTIME_RESPONSE" == *'Temporal preserves Workflow history'* ]]; then
+    echo "Replacing stale SignalRoom process $PORT_PID on port $PORT..."
+    kill "$PORT_PID" 2>/dev/null || true
+    for _attempt in {1..30}; do
+      if ! lsof -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.1
+    done
+  else
+    echo "Port $PORT is used by another application (PID $PORT_PID)." >&2
+    echo "Stop that application or run SIGNALROOM_PORT=4174 ./scripts/dev.sh" >&2
+    exit 1
+  fi
+fi
+
+if lsof -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "SignalRoom could not release port $PORT. Stop PID $PORT_PID and retry." >&2
+  exit 1
+fi
 
 if docker inspect signalroom-temporal >/dev/null 2>&1; then
   docker start signalroom-temporal >/dev/null 2>&1 || true
@@ -37,4 +65,4 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-uv run python server.py --port "${SIGNALROOM_PORT:-4173}"
+uv run python server.py --port "$PORT"

@@ -52,7 +52,7 @@ Open:
 
 The script starts the local Temporal development service, installs the locked Python environment, starts a Temporal Worker and runs the SignalRoom server. Stop SignalRoom with `Ctrl-C`. The Temporal container remains available for the next run.
 
-If an older SignalRoom server is still using port 4173, stop it with `Ctrl-C` before starting this version.
+If an older SignalRoom server is still using port 4173, the launcher identifies and replaces that stale SignalRoom process automatically. It will never terminate an unrelated application on the port; in that case it prints the conflicting PID and suggests `SIGNALROOM_PORT=4174 ./scripts/dev.sh`.
 
 ### Run the processes separately
 

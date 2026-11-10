@@ -16,7 +16,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from signalroom_core import DEFAULT_DB, OUTCOME_CONTRACTS, WEB_ROOT, Engine, Store, seed
-from worker_runtime import read_worker_state, safe_worker_pid
+from worker_runtime import INSTANCE_ID, PROJECT_ROOT, read_worker_state, safe_worker_pid
 
 try:
     from temporal_bridge import TemporalBridge
@@ -78,6 +78,9 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
             return
         if path == "/api/runtime":
             self._json({
+                "instance_id": INSTANCE_ID,
+                "project_root": str(PROJECT_ROOT),
+                "server_pid": os.getpid(),
                 "temporal_connected": self.temporal_connected,
                 "runtime": "temporal" if self.temporal_connected else "local-fallback",
                 "temporal_ui": "http://127.0.0.1:8233" if self.temporal_connected else None,
