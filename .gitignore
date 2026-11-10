@@ -6,3 +6,4 @@ signalroom.db
 signalroom-*.db
 *.db-journal
 .env
+.signalroom/

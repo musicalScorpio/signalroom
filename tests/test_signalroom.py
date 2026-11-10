@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from signalroom_core import Engine, OUTCOME_CONTRACTS, Store
+from worker_runtime import read_worker_state, safe_worker_pid, write_worker_state
 
 
 SUMMARIES = {
@@ -81,6 +82,18 @@ class SignalRoomTests(unittest.TestCase):
         self.assertFalse(result["validation"]["valid"])
         self.assertEqual(result["validation"]["suggested_type"], "workflow.stalled")
         self.assertEqual(result["outcome"]["business_result"]["code"], "signal_rejected")
+
+    def test_worker_state_is_written_atomically_and_read_back(self):
+        path = Path(self.tempdir.name) / "worker-state.json"
+        expected = {"status": "online", "worker_pid": 4321, "restart_count": 2}
+        write_worker_state(expected, path)
+        self.assertEqual(read_worker_state(path), expected)
+
+    def test_crash_demo_rejects_unsafe_worker_pids(self):
+        self.assertIsNone(safe_worker_pid({"worker_pid": True}))
+        self.assertIsNone(safe_worker_pid({"worker_pid": 1}))
+        self.assertIsNone(safe_worker_pid({"worker_pid": 9000}, server_pid=9000))
+        self.assertEqual(safe_worker_pid({"worker_pid": 9001}, server_pid=9000), 9001)
 
 
 if __name__ == "__main__":

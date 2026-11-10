@@ -62,7 +62,7 @@ docker run -d --name signalroom-temporal \
   temporalio/temporal:latest server start-dev --ip 0.0.0.0
 
 uv sync
-uv run python worker.py
+uv run python worker_supervisor.py
 ```
 
 In another terminal:
@@ -111,6 +111,7 @@ flowchart LR
     end
     subgraph service ["Durable Agent Services"]
         workflowClient["Temporal Workflow Client"]
+        supervisor["Local Worker Supervisor"]
         worker["SignalRoom Temporal Worker"]
         decision["Policy and Local Model Activities"]
         effects["Idempotent Action Activities"]
@@ -132,6 +133,7 @@ flowchart LR
     api -->|"Starts and signals"| workflowClient
     api -->|"Reads views"| projector
     workflowClient -.->|"Starts workflows"| temporal
+    supervisor -.->|"Starts and replaces process"| worker
     temporal -.->|"Dispatches and records"| worker
     worker -->|"Requests decisions"| decision
     decision -.->|"Ollama: Local inference"| ollama
@@ -145,21 +147,21 @@ All network calls, model inference, database lookups and external actions are Ac
 
 ## Durability demonstration
 
-1. Select **Guarded mode**.
-2. Inject a `threshold.breached` signal.
-3. Confirm it reaches **Approval needed**.
-4. Stop `worker.py` while the Workflow is waiting.
-5. Start `worker.py` again.
-6. Approve the action in SignalRoom.
-7. Report `Asset stabilized` as the external outcome.
+1. Open the **Event-to-Outcome Map**.
+2. Click **Run crash + resume demo**.
+3. SignalRoom starts a Workflow and pauses it at the business-outcome wait.
+4. The demo kills the current Worker and sends the outcome while no Worker is running.
+5. The supervisor starts a replacement Worker, which replays the same Workflow history and completes it.
 
-The Workflow resumes from its recorded approval wait, dispatches the action once and closes only when business-outcome evidence arrives.
+Temporal is the durable state owner, not a process manager. `worker_supervisor.py` restarts the local Worker process; Temporal retains the Workflow and queued signal so the replacement Worker can resume safely. The UI shows both responsibilities separately.
 
 ## API
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/api/runtime` | Show Temporal connection state |
+| `POST` | `/api/demo/durability` | Start a shadow Workflow for the crash/recovery proof |
+| `POST` | `/api/demo/worker/crash` | Kill only the supervised local Worker (enabled by `scripts/dev.sh`) |
 | `GET` | `/api/events` | List projected event cases |
 | `POST` | `/api/events` | Start a durable event Workflow |
 | `GET` | `/api/events/:id` | Read one event-to-outcome record |

@@ -47,9 +47,28 @@
     <section class="map-section" aria-labelledby="map-title">
       <div class="section-heading">
         <div><p class="eyebrow"><span>02</span> Live trace</p><h2 id="map-title">Event-to-Outcome Map</h2></div>
-        <p id="selected-meta" class="section-meta">Select an event to reconstruct its path.</p>
+        <div class="map-actions">
+          <p id="selected-meta" class="section-meta">Select an event to reconstruct its path.</p>
+          <button class="button demo-button" id="durability-demo-button"><span class="demo-button-dot"></span>Run crash + resume demo</button>
+        </div>
+      </div>
+      <div class="runtime-rail" aria-label="Durable runtime status">
+        <div><span>Temporal service</span><strong id="temporal-status">Checking</strong><small>Owns workflow history</small></div>
+        <span class="runtime-arrow">→</span>
+        <div><span>Agent Worker</span><strong id="worker-status" data-status="unknown">Checking</strong><small id="worker-detail">Runs workflow tasks</small></div>
+        <span class="runtime-arrow">→</span>
+        <div><span>Recovery proof</span><strong id="restart-count">0 restarts</strong><small>Supervisor replaces process</small></div>
       </div>
       <div class="path" id="event-path" aria-label="Event processing lifecycle"></div>
+      <div class="path-inspector" id="path-inspector" aria-live="polite">
+        <span class="inspector-index">Stage</span>
+        <div><strong>Select a point in the map</strong><p>Each point explains what the Worker, Temporal, policy, or source system is doing.</p></div>
+        <span class="inspector-state">Waiting</span>
+      </div>
+      <div class="demo-console" id="demo-console" hidden aria-live="polite">
+        <div class="demo-console-head"><span>Live durability proof</span><strong id="demo-console-status">Starting</strong></div>
+        <ol id="demo-steps"></ol>
+      </div>
     </section>
 
     <section class="control-grid">

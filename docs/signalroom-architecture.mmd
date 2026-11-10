@@ -8,6 +8,7 @@ flowchart LR
     end
     subgraph service ["Durable Agent Services"]
         workflowClient["Temporal Workflow Client"]
+        supervisor["Local Worker Supervisor"]
         worker["SignalRoom Temporal Worker"]
         decision["Policy and Local Model Activities"]
         effects["Idempotent Action Activities"]
@@ -29,6 +30,7 @@ flowchart LR
     api -->|"Starts and signals"| workflowClient
     api -->|"Reads views"| projector
     workflowClient -.->|"Starts workflows"| temporal
+    supervisor -.->|"Starts and replaces process"| worker
     temporal -.->|"Dispatches and records"| worker
     worker -->|"Requests decisions"| decision
     decision -.->|"Ollama: Local inference"| ollama

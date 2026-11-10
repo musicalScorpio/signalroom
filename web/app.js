@@ -1,18 +1,28 @@
-const state = { events: [], selected: null, mode: "shadow", runtime: "unknown" };
+const state = {
+  events: [], selected: null, mode: "shadow", runtime: "unknown",
+  runtimeInfo: null, activeStage: null, demoRunning: false,
+};
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const statusLabels = {
-  queued: "Queued",
-  validating: "Validating",
-  awaiting_approval: "Approval needed",
-  observing_outcome: "Awaiting outcome",
-  completed: "Outcome recorded",
-  shadowed: "Legacy shadow run",
-  needs_approval: "Approval needed",
-  acted: "Action dispatched",
-  approved: "Approved",
-  rejected: "Rejected",
+  queued: "Queued", validating: "Validating", awaiting_approval: "Approval needed",
+  observing_outcome: "Awaiting outcome", completed: "Outcome recorded",
+  shadowed: "Legacy shadow run", needs_approval: "Approval needed",
+  acted: "Action dispatched", approved: "Approved", rejected: "Rejected",
+};
+
+const stageGuide = {
+  event: ["Signal accepted", "The API validates the event contract and deduplicates it by durable Workflow ID."],
+  context: ["Worker assembles context", "This is where the Temporal Worker first does meaningful agent work: Activities gather fresh source data."],
+  policy: ["Policy sets the boundary", "Deterministic rules decide whether the proposal can proceed, must wait for a human, or stays in shadow mode."],
+  action: ["Agent proposes an intervention", "A local rule or open Ollama model selects a bounded action. The recommendation is evidence, not yet an outcome."],
+  human: ["Durable human exception", "Temporal can wait here for hours or days without a Worker process consuming compute. Approval arrives as a signal."],
+  execution: ["Side effect executes once", "An idempotent Activity performs the approved action at most once, even if it is retried after a crash."],
+  outcome: ["Source system reports evidence", "The Workflow remains open until the business system reports what actually happened. It can receive this signal while the Worker is offline."],
+  feedback: ["Intervention is judged", "Operator feedback records whether the interruption was useful or noise and closes the learning loop."],
+  queued: ["Temporal schedules work", "The API started a durable Workflow. Temporal now places its first Workflow Task on the SignalRoom task queue."],
 };
 
 const examples = {
@@ -35,7 +45,7 @@ function showToast(message) {
   toast.textContent = message;
   toast.classList.add("show");
   clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => toast.classList.remove("show"), 2800);
+  showToast.timer = setTimeout(() => toast.classList.remove("show"), 3200);
 }
 
 function relativeTime(value) {
@@ -56,9 +66,41 @@ function renderEvents() {
       <span class="event-pip"></span>
       <span><span class="event-title">${escapeHtml(event.summary)}</span><span class="event-source">${escapeHtml(event.source)} · ${event.id}</span></span>
       <time class="event-time" datetime="${event.received_at}">${relativeTime(event.received_at)}</time>
-    </button>
-  `).join("");
+    </button>`).join("");
   $$(".event-row").forEach((row) => row.addEventListener("click", () => selectEvent(row.dataset.id)));
+}
+
+function inferredActiveStage(event, trace) {
+  if (event.status === "queued") return "queued";
+  if (event.status === "validating") return trace.some((item) => item.stage === "context") ? "context" : "event";
+  if (["awaiting_approval", "needs_approval"].includes(event.status)) return "human";
+  if (event.status === "observing_outcome") return "outcome";
+  if (event.status === "completed" && !event.feedback?.rating) return "feedback";
+  return null;
+}
+
+function renderPath(trace) {
+  const visibleTrace = trace.length ? trace : [{ stage: "queued", state: "waiting", note: "Temporal workflow starting" }];
+  const activeStage = state.activeStage || inferredActiveStage(state.selected, visibleTrace);
+  $("#event-path").innerHTML = visibleTrace.map((item) => `
+    <button class="path-node ${escapeHtml(item.state)} ${activeStage === item.stage ? "active" : ""}" data-stage="${escapeHtml(item.stage)}" aria-label="Inspect ${escapeHtml(item.stage)} stage">
+      <span class="path-dot"></span><span class="path-stage">${escapeHtml(item.stage)}</span><span class="path-note">${escapeHtml(item.note)}</span>
+    </button>`).join("");
+  $$(".path-node").forEach((node) => node.addEventListener("click", () => {
+    state.activeStage = node.dataset.stage;
+    renderPath(trace);
+    renderStageInspector(visibleTrace.find((item) => item.stage === state.activeStage));
+  }));
+  renderStageInspector(visibleTrace.find((item) => item.stage === activeStage) || visibleTrace[0]);
+}
+
+function renderStageInspector(item) {
+  if (!item) return;
+  const guide = stageGuide[item.stage] || [item.stage, "This stage is recorded in the durable event history."];
+  $("#path-inspector").innerHTML = `
+    <span class="inspector-index">${escapeHtml(item.stage)}</span>
+    <div><strong>${escapeHtml(guide[0])}</strong><p>${escapeHtml(guide[1])}<br>Record: ${escapeHtml(item.note || "No note")}</p></div>
+    <span class="inspector-state">${escapeHtml(item.state)}</span>`;
 }
 
 function renderSelected() {
@@ -73,7 +115,7 @@ function renderSelected() {
   $("#decision-status").dataset.status = event.status;
   $("#decision-type").textContent = `${event.type} · ${event.id}`;
   $("#decision-label").textContent = recommendationAvailable ? decision.label : validation.valid === false ? "Signal rejected before agent execution" : "Durable workflow is assembling the case";
-  $("#decision-rationale").textContent = recommendationAvailable ? decision.rationale : validation.issue || "The workflow is validating the event and gathering context.";
+  $("#decision-rationale").textContent = recommendationAvailable ? decision.rationale : validation.issue || "The Worker is validating the event and gathering context.";
   $("#decision-confidence").textContent = recommendationAvailable ? `${Math.round(decision.confidence * 100)}%` : "—";
   $("#decision-risk").textContent = decision.risk || "—";
   $("#decision-owner").textContent = decision.owner || "—";
@@ -82,15 +124,13 @@ function renderSelected() {
   $("#selected-meta").textContent = `${event.summary} · ${event.source}`;
 
   const approval = $("#approval-box");
-  const needsApproval = event.status === "awaiting_approval" || event.status === "needs_approval";
+  const needsApproval = ["awaiting_approval", "needs_approval"].includes(event.status);
   approval.dataset.hidden = needsApproval ? "false" : "true";
   const actionResult = event.outcome?.action_result;
   $("#approval-copy").textContent = needsApproval
-    ? "The durable workflow is paused. It can wait through restarts until a decision arrives."
-    : actionResult?.state === "withheld_shadow"
-      ? "Shadow mode withheld the side effect; the workflow is still observing the business result."
-      : actionResult?.state === "dispatched"
-        ? `Action dispatched once as ${actionResult.reference}.`
+    ? "Temporal is durably paused. The Worker is free to do other work until a decision arrives."
+    : actionResult?.state === "withheld_shadow" ? "Shadow mode withheld the side effect; the Workflow is still observing the business result."
+      : actionResult?.state === "dispatched" ? `Action dispatched once as ${actionResult.reference}.`
         : validation.valid === false ? validation.issue : "No human exception is currently pending.";
 
   renderOutcome(event);
@@ -129,27 +169,35 @@ function renderOutcome(event) {
   }
 }
 
-function renderPath(trace) {
-  $("#event-path").innerHTML = trace.length ? trace.map((item) => `
-    <div class="path-node ${item.state}"><span class="path-dot"></span><span class="path-stage">${escapeHtml(item.stage)}</span><span class="path-note">${escapeHtml(item.note)}</span></div>
-  `).join("") : `<div class="path-node waiting"><span class="path-dot"></span><span class="path-stage">queued</span><span class="path-note">Temporal workflow starting</span></div>`;
+function renderRuntime(runtime) {
+  state.runtimeInfo = runtime;
+  const worker = runtime.worker || {};
+  $("#temporal-status").textContent = runtime.temporal_connected ? "Connected" : "Offline";
+  $("#worker-status").textContent = worker.status || "unknown";
+  $("#worker-status").dataset.status = worker.status || "unknown";
+  $("#worker-detail").textContent = worker.worker_pid ? `PID ${worker.worker_pid} · runs workflow tasks` : "No Worker process; Temporal keeps state";
+  const count = worker.restart_count || 0;
+  $("#restart-count").textContent = `${count} restart${count === 1 ? "" : "s"}`;
+  $("#runtime-indicator").textContent = runtime.temporal_connected ? `Temporal connected · Worker ${worker.status || "unknown"}` : "Local fallback runtime";
+  $("#durability-demo-button").disabled = state.demoRunning || !runtime.temporal_connected || !runtime.chaos_demo_enabled || worker.status !== "online";
 }
 
 function selectEvent(id) {
   state.selected = state.events.find((event) => event.id === id);
+  state.activeStage = null;
   renderEvents();
   renderSelected();
 }
 
 async function load() {
-  const [{ events, mode, runtime }, metrics] = await Promise.all([api("/api/events"), api("/api/metrics")]);
+  const [{ events, mode, runtime }, metrics, runtimeInfo] = await Promise.all([api("/api/events"), api("/api/metrics"), api("/api/runtime")]);
   state.events = events;
   state.mode = mode;
   state.runtime = runtime;
   $("#run-mode").value = mode;
-  $("#runtime-indicator").textContent = runtime === "temporal" ? "Temporal durable runtime" : "Local fallback runtime";
   if (!state.selected || !events.some((event) => event.id === state.selected.id)) state.selected = events[0];
   else state.selected = events.find((event) => event.id === state.selected.id);
+  renderRuntime(runtimeInfo);
   renderEvents();
   renderSelected();
   renderMetrics(metrics);
@@ -163,21 +211,96 @@ function renderMetrics(metrics) {
   $("#outcome-score").textContent = metrics.completed ? `${Math.round(metrics.successful / metrics.completed * 100)}%` : "—";
 }
 
+function setDemoSteps(steps, activeIndex = -1, failedIndex = -1) {
+  $("#demo-steps").innerHTML = steps.map((step, index) => `<li class="${index < activeIndex ? "done" : index === activeIndex ? "active" : index === failedIndex ? "failed" : ""}">${escapeHtml(step)}</li>`).join("");
+}
+
+async function runDurabilityDemo() {
+  if (state.demoRunning) return;
+  state.demoRunning = true;
+  const consoleBox = $("#demo-console");
+  consoleBox.hidden = false;
+  const steps = [
+    "Start a durable Workflow and wait at the Outcome stage",
+    "Kill the current Agent Worker process",
+    "Send business outcome while no Worker is running",
+    "Supervisor starts a replacement Worker",
+    "Replacement Worker replays history and completes the same Workflow",
+  ];
+  setDemoSteps(steps, 0);
+  $("#demo-console-status").textContent = "Temporal creating workflow";
+  renderRuntime(state.runtimeInfo);
+  let activeIndex = 0;
+  try {
+    const baselineRestarts = state.runtimeInfo?.worker?.restart_count || 0;
+    const created = await api("/api/demo/durability", { method: "POST", body: "{}" });
+    state.selected = created.event;
+    state.activeStage = "outcome";
+    await load();
+    activeIndex = 1;
+    setDemoSteps(steps, activeIndex);
+    $("#demo-console-status").textContent = "Crashing Worker";
+
+    await api("/api/demo/worker/crash", { method: "POST", body: "{}" });
+    await sleep(350);
+    const offlineRuntime = await api("/api/runtime");
+    renderRuntime(offlineRuntime);
+    activeIndex = 2;
+    setDemoSteps(steps, activeIndex);
+    $("#demo-console-status").textContent = "Worker offline · signal accepted by Temporal";
+
+    await api(`/api/events/${created.event.id}/outcome`, {
+      method: "POST",
+      body: JSON.stringify({ code: "workflow_resumed", note: "Outcome signal was accepted while the Agent Worker was offline.", metrics: { recovery_time_minutes: 0 } }),
+    });
+
+    activeIndex = 3;
+    setDemoSteps(steps, activeIndex);
+    $("#demo-console-status").textContent = "Waiting for replacement Worker";
+    const deadline = Date.now() + 16000;
+    let replacementSeen = false;
+    let completed = false;
+    while (Date.now() < deadline) {
+      await sleep(500);
+      await load();
+      replacementSeen = state.runtimeInfo?.worker?.status === "online" && (state.runtimeInfo?.worker?.restart_count || 0) > baselineRestarts;
+      completed = state.selected?.id === created.event.id && state.selected?.status === "completed";
+      if (replacementSeen && activeIndex === 3) {
+        activeIndex = 4;
+        setDemoSteps(steps, activeIndex);
+        $("#demo-console-status").textContent = "Worker replaying history";
+      }
+      if (replacementSeen && completed) break;
+    }
+    if (!replacementSeen || !completed) throw new Error("The replacement Worker did not complete the proof before the demo timeout.");
+    state.activeStage = "outcome";
+    renderSelected();
+    setDemoSteps(steps, 5);
+    $("#demo-console-status").textContent = "Proof complete";
+    showToast("Durability proven: a replacement Worker completed the same Workflow.");
+  } catch (error) {
+    setDemoSteps(steps, -1, activeIndex);
+    $("#demo-console-status").textContent = "Demo stopped";
+    showToast(error.message);
+  } finally {
+    state.demoRunning = false;
+    const latestRuntime = await api("/api/runtime").catch(() => state.runtimeInfo);
+    if (latestRuntime) renderRuntime(latestRuntime);
+  }
+}
+
 async function decide(action) {
   if (!state.selected) return;
-  await api(`/api/events/${state.selected.id}/${action}`, { method: "POST", body: JSON.stringify({}) });
-  showToast(action === "approve" ? "Approval signal delivered to the workflow." : "Rejection signal delivered to the workflow.");
+  await api(`/api/events/${state.selected.id}/${action}`, { method: "POST", body: "{}" });
+  showToast(action === "approve" ? "Approval signal delivered to the Workflow." : "Rejection signal delivered to the Workflow.");
   await load();
 }
 
 async function reportOutcome(code, metric) {
   if (!state.selected) return;
   const metricValue = Number($("#outcome-metric").value);
-  await api(`/api/events/${state.selected.id}/outcome`, {
-    method: "POST",
-    body: JSON.stringify({ code, note: $("#outcome-note").value, metrics: { [metric]: metricValue } }),
-  });
-  showToast("Business outcome delivered; the durable workflow completed.");
+  await api(`/api/events/${state.selected.id}/outcome`, { method: "POST", body: JSON.stringify({ code, note: $("#outcome-note").value, metrics: { [metric]: metricValue } }) });
+  showToast("Business outcome delivered; the durable Workflow completed.");
   await load();
 }
 
@@ -188,6 +311,7 @@ async function rate(rating) {
   await load();
 }
 
+$("#durability-demo-button").addEventListener("click", runDurabilityDemo);
 $("#new-event-button").addEventListener("click", () => $("#event-dialog").showModal());
 $("#close-dialog").addEventListener("click", () => $("#event-dialog").close());
 $("#cancel-dialog").addEventListener("click", () => $("#event-dialog").close());
@@ -196,7 +320,7 @@ $("#reject-button").addEventListener("click", () => decide("reject"));
 $$(".feedback-row button").forEach((button) => button.addEventListener("click", () => rate(button.dataset.rating)));
 $("#run-mode").addEventListener("change", async (event) => {
   await api("/api/config", { method: "POST", body: JSON.stringify({ run_mode: event.target.value }) });
-  showToast(`New workflows will run in ${event.target.value} mode.`);
+  showToast(`New Workflows will run in ${event.target.value} mode.`);
   await load();
 });
 $("#event-form select[name='type']").addEventListener("change", (event) => {
@@ -208,8 +332,12 @@ $("#event-form").addEventListener("submit", async (event) => {
   const result = await api("/api/events", { method: "POST", body: JSON.stringify({ type: form.get("type"), source: form.get("source"), summary: form.get("summary"), payload: { injected: true } }) });
   $("#event-dialog").close();
   state.selected = result.event;
-  showToast(result.duplicate ? "Duplicate workflow already exists." : `Event started on the ${result.runtime} runtime.`);
+  state.activeStage = null;
+  showToast(result.duplicate ? "Duplicate Workflow already exists." : `Event started on the ${result.runtime} runtime.`);
   await load();
 });
 
 load().catch((error) => showToast(error.message));
+setInterval(() => {
+  if (!state.demoRunning && !document.hidden) load().catch(() => {});
+}, 3000);

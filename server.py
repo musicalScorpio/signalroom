@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import time
 import uuid
 from http import HTTPStatus
@@ -15,6 +16,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from signalroom_core import DEFAULT_DB, OUTCOME_CONTRACTS, WEB_ROOT, Engine, Store, seed
+from worker_runtime import read_worker_state, safe_worker_pid
 
 try:
     from temporal_bridge import TemporalBridge
@@ -71,7 +73,14 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
             self._json(self.store.metrics())
             return
         if path == "/api/runtime":
-            self._json({"temporal_connected": self.temporal_connected, "runtime": "temporal" if self.temporal_connected else "local-fallback", "temporal_ui": "http://127.0.0.1:8233" if self.temporal_connected else None})
+            self._json({
+                "temporal_connected": self.temporal_connected,
+                "runtime": "temporal" if self.temporal_connected else "local-fallback",
+                "temporal_ui": "http://127.0.0.1:8233" if self.temporal_connected else None,
+                "worker": read_worker_state(),
+                "chaos_demo_enabled": os.getenv("SIGNALROOM_ENABLE_CHAOS_DEMO", "0").lower() in {"1", "true", "on"},
+                "explanation": "Temporal preserves Workflow history. The local supervisor restarts the Worker process, which replays that history and resumes.",
+            })
             return
         if path.startswith("/api/events/"):
             event = self.store.get(path.rsplit("/", 1)[-1])
@@ -106,6 +115,48 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
             else:
                 event, duplicate = self.engine.process(body)
                 self._json({"event": event, "duplicate": duplicate, "runtime": "local-fallback"}, HTTPStatus.OK if duplicate else HTTPStatus.CREATED)
+            return
+
+        if path == "/api/demo/durability":
+            if not self.temporal_connected:
+                self._json({"error": "The durability demo requires the Temporal runtime."}, HTTPStatus.SERVICE_UNAVAILABLE)
+                return
+            demo = {
+                "id": f"evt_durable_{uuid.uuid4().hex[:8]}",
+                "type": "workflow.stalled",
+                "source": "durability.demo",
+                "summary": "Durability proof: outcome arrives while the agent Worker is offline",
+                "payload": {"demo": "worker-crash-resume"},
+                "run_mode": "shadow",
+                "outcome_contract": OUTCOME_CONTRACTS["workflow.stalled"],
+            }
+            self.store.upsert(self.engine.queued_record(demo, "temporal"))
+            created = self.temporal.start_event(demo)
+            event = wait_for_projection(self.store, demo["id"], {"observing_outcome"}, timeout=4.0)
+            self._json({"event": event, "created": created, "runtime": "temporal"}, HTTPStatus.CREATED)
+            return
+
+        if path == "/api/demo/worker/crash":
+            enabled = os.getenv("SIGNALROOM_ENABLE_CHAOS_DEMO", "0").lower() in {"1", "true", "on"}
+            if not enabled:
+                self._json({"error": "The local crash demo is disabled."}, HTTPStatus.FORBIDDEN)
+                return
+            worker_state = read_worker_state()
+            worker_pid = safe_worker_pid(worker_state, os.getpid())
+            if not worker_pid:
+                self._json({"error": "No supervised Worker is currently online."}, HTTPStatus.CONFLICT)
+                return
+            try:
+                os.kill(worker_pid, 0)
+                os.kill(worker_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                self._json({"error": "The Worker exited before the crash signal arrived."}, HTTPStatus.CONFLICT)
+                return
+            self._json({
+                "accepted": True,
+                "killed_worker_pid": worker_pid,
+                "message": "Worker killed. Temporal still owns the Workflow; the supervisor will start a replacement.",
+            }, HTTPStatus.ACCEPTED)
             return
 
         if path == "/api/config":

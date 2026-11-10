@@ -27,12 +27,13 @@ fi
 uv sync
 
 export SIGNALROOM_DB="${SIGNALROOM_DB:-$PROJECT_DIR/signalroom.db}"
+export SIGNALROOM_ENABLE_CHAOS_DEMO="${SIGNALROOM_ENABLE_CHAOS_DEMO:-1}"
 
-uv run python worker.py &
-WORKER_PID=$!
+uv run python worker_supervisor.py &
+SUPERVISOR_PID=$!
 
 cleanup() {
-  kill "$WORKER_PID" 2>/dev/null || true
+  kill "$SUPERVISOR_PID" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
