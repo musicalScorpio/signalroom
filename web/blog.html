@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agents are becoming less dependent on humans — SignalRoom</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .article-head{padding:90px 7vw 72px;border-bottom:1px solid var(--ink)}.article-head h1{max-width:1150px;font-size:clamp(52px,8vw,118px)}.article-deck{max-width:700px;margin:50px 0 0 auto;font-size:20px;line-height:1.6}.article-meta{display:flex;justify-content:space-between;margin-top:60px;padding-top:16px;border-top:1px solid var(--ink);font:400 10px var(--mono);text-transform:uppercase}.article-body{display:grid;grid-template-columns:minmax(160px,.45fr) minmax(0,1.3fr) minmax(160px,.45fr);gap:5vw;padding:80px 7vw}.article-body article{max-width:760px}.article-body p{font-size:17px;line-height:1.85;margin:0 0 30px}.article-body h2{font-size:42px;line-height:1.08;letter-spacing:-.05em;margin:75px 0 28px}.article-body blockquote{margin:55px -6vw;padding:45px 6vw;border-top:1px solid var(--ink);border-bottom:1px solid var(--ink);font:500 31px/1.35 var(--sans);letter-spacing:-.035em}.article-side{font:300 10px/1.7 var(--mono);color:var(--muted)}.article-side strong{display:block;color:var(--ink);text-transform:uppercase;margin-bottom:10px}.article-side a{color:inherit}.article-side.sticky>div{position:sticky;top:110px}.article-footer{padding:65px 7vw;color:var(--paper);background:var(--ink)}.article-footer p{max-width:900px;font-size:30px;letter-spacing:-.04em}.article-footer a{color:var(--acid);font:500 11px var(--mono);text-transform:uppercase}@media(max-width:850px){.article-body{grid-template-columns:1fr}.article-side{border-top:1px solid var(--line);padding-top:18px}.article-side.sticky>div{position:static}.article-body blockquote{margin:45px 0;padding:30px 0}.article-head{padding:60px 20px}.article-body{padding:55px 20px}.article-footer{padding:55px 20px}}
+  </style>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/"><span class="brand-mark"><i></i><i></i><i></i></span><span>SignalRoom</span></a><p class="tagline">field note / 001</p><div class="header-actions"><a class="button button-primary" href="/">Open control room</a></div></header>
+  <main>
+    <section class="article-head"><p class="eyebrow"><span>Field note 001</span> Ambient systems</p><h1>Agents are becoming less dependent on humans.</h1><p class="article-deck">That does not mean humans matter less. It means our role is moving from initiating every task to designing the conditions under which work may begin.</p><div class="article-meta"><span>SignalRoom project</span><span>November 2026 · 7 min read</span></div></section>
+    <section class="article-body">
+      <aside class="article-side sticky"><div><strong>The argument</strong>Human initiation is becoming optional. Human accountability is not.</div></aside>
+      <article>
+        <p>For most of the current AI era, a person has been the ignition system. We open a window, describe a task, provide context, and wait for a response. Even the most capable model remains dormant until somebody remembers to ask.</p>
+        <p>That dependency is beginning to disappear.</p>
+        <p>The important interface for the next generation of agents may not be a screen. It may be an event: a contract arriving in storage, a deployment failing, a threshold being crossed, or a workflow quietly exceeding its service-level agreement. The event is not a prompt written in natural language. It is evidence that the world changed.</p>
+        <h2>From answering questions to noticing change</h2>
+        <p>An ambient agent begins with a different question: not “What did the user ask?” but “Did this change deserve action?” That distinction sounds small, but it rearranges the whole system.</p>
+        <p>The agent must assemble a current context snapshot, check policy, choose whether to act, know when its authority ends, and leave enough evidence for another person to reconstruct what happened. Sometimes the correct decision is to do nothing. In an event-driven system, restraint is a behavior that must be observable too.</p>
+        <blockquote>The meaningful unit of agent design is no longer the answer. It is the path from an observed change to a measurable outcome.</blockquote>
+        <p>This is why the event-to-outcome map matters: event → context snapshot → policy check → agent action → human exception → business outcome → feedback. Each arrow is an operational contract. Each stage is a place where stale data, duplicate delivery, ambiguous authority, or model uncertainty can turn a helpful agent into a noisy one.</p>
+        <h2>Less dependence is not unlimited autonomy</h2>
+        <p>“Less dependent on humans” can easily be mistaken for “remove humans from the loop.” That is the wrong ambition. The real opportunity is to remove humans from the parts where their presence adds delay but not judgment.</p>
+        <p>A person should not need to notice the same stalled workflow every morning. They may still need to approve a financial exception. A person should not need to gather the same five diagnostic facts after every failed deployment. They may still need to authorize an irreversible rollback. The system should earn autonomy one bounded action at a time.</p>
+        <p>This changes human work from continuous supervision to exception design. Leaders define policy boundaries. Operators handle unusual cases. Reviewers inspect evidence and outcomes. The agent carries the repetitive burden of noticing, gathering, and routing.</p>
+        <h2>Shadow mode is where trust becomes evidence</h2>
+        <p>The safest first deployment is not full automation. It is shadow mode: let the agent observe real events, assemble context, propose an action, and withhold the side effect. Then compare the proposal with what people actually did.</p>
+        <p>Measure useful interventions, false interruptions, escalation rate, duplicate suppression, time recovered, and whether an uninvolved reviewer can reconstruct the decision from the event record. These measures tell you more than a generic model benchmark because they test the whole socio-technical path.</p>
+        <p>Trust should not be a feeling produced by a polished demo. It should be an accumulation of evidence that the system notices the right moments, respects its boundaries, and improves outcomes without manufacturing unnecessary work.</p>
+        <h2>The durable advantage is organizational</h2>
+        <p>Models will continue to improve and become easier to run locally. The scarcer capability will be organizational: knowing which events matter, where the necessary context lives, which actions are reversible, who owns exceptions, and how success will be measured.</p>
+        <p>That is the deeper shift. Agents are becoming less dependent on people to begin work. Organizations will become more dependent on people to design the rules by which work begins.</p>
+        <p>The model remains probabilistic. The event-to-outcome path is where leadership creates structure.</p>
+      </article>
+      <aside class="article-side"><strong>Source signals</strong><p>AWS ambient-agent pattern<br>OpenAI session lifecycle webhooks<br>MLflow event-driven agent operations<br>Research on enterprise-scale event orchestration</p><p>Links and implementation notes are preserved in the repository README.</p></aside>
+    </section>
+    <footer class="article-footer"><p>SignalRoom is an open-source experiment in making ambient-agent decisions visible, bounded, and measurable.</p><a href="/">Explore the working prototype →</a></footer>
+  </main>
+</body></html>

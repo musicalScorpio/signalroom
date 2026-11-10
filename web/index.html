@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="SignalRoom is an open-source control room for event-driven ambient agents.">
+  <title>SignalRoom — Ambient agents, accountable outcomes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="SignalRoom home">
+      <span class="brand-mark"><i></i><i></i><i></i></span>
+      <span>SignalRoom</span>
+    </a>
+    <p class="tagline">ambient agents, accountable outcomes</p>
+    <div class="header-actions">
+      <label class="mode-control" for="run-mode">
+        <span class="live-dot"></span>
+        <select id="run-mode" aria-label="Agent run mode">
+          <option value="shadow">Shadow mode</option>
+          <option value="guarded">Guarded mode</option>
+          <option value="autonomous">Autonomous mode</option>
+        </select>
+      </label>
+      <button class="button button-primary" id="new-event-button">Inject event <span>↗</span></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="intro" aria-labelledby="intro-title">
+      <p class="eyebrow"><span>01</span> Event-to-outcome control room</p>
+      <div class="intro-grid">
+        <h1 id="intro-title">The next interface<br>is a <em>change</em> in state.</h1>
+        <div class="intro-copy">
+          <p>SignalRoom wakes agents when systems change, not when a person remembers to ask. Every decision stays bounded by policy, visible to humans, and reconstructable from the event record.</p>
+          <div class="principle"><span>Core principle</span><strong>Less human initiation.<br>Never less accountability.</strong></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="map-section" aria-labelledby="map-title">
+      <div class="section-heading">
+        <div><p class="eyebrow"><span>02</span> Live trace</p><h2 id="map-title">Event-to-Outcome Map</h2></div>
+        <p id="selected-meta" class="section-meta">Select an event to reconstruct its path.</p>
+      </div>
+      <div class="path" id="event-path" aria-label="Event processing lifecycle"></div>
+    </section>
+
+    <section class="control-grid">
+      <aside class="event-stream" aria-labelledby="stream-title">
+        <div class="panel-heading">
+          <div><p class="eyebrow"><span>03</span> Signal bus</p><h2 id="stream-title">Incoming events</h2></div>
+          <span class="count" id="event-count">0</span>
+        </div>
+        <div id="event-list" class="event-list" role="list"></div>
+      </aside>
+
+      <section class="decision-panel" aria-labelledby="decision-title">
+        <div class="panel-heading">
+          <div><p class="eyebrow"><span>04</span> Agent decision</p><h2 id="decision-title">Intervention record</h2></div>
+          <span class="status-pill" id="decision-status">Waiting</span>
+        </div>
+        <div id="decision-empty" class="empty-state">Choose an event from the stream.</div>
+        <div id="decision-content" hidden>
+          <p class="decision-kicker" id="decision-type"></p>
+          <h3 id="decision-label"></h3>
+          <p class="decision-rationale" id="decision-rationale"></p>
+          <div class="decision-facts">
+            <div><span>Confidence</span><strong id="decision-confidence"></strong></div>
+            <div><span>Risk</span><strong id="decision-risk"></strong></div>
+            <div><span>Owner</span><strong id="decision-owner"></strong></div>
+            <div><span>Model</span><strong id="decision-model"></strong></div>
+          </div>
+          <div class="context-block">
+            <span>Context snapshot</span>
+            <div id="context-chips" class="context-chips"></div>
+          </div>
+          <div class="approval-box" id="approval-box">
+            <div><span class="approval-symbol">!</span><p><strong>Human exception</strong><br><small id="approval-copy">This action crosses the delegated authority boundary.</small></p></div>
+            <div class="approval-actions">
+              <button class="button button-ghost" id="reject-button">Reject</button>
+              <button class="button button-primary" id="approve-button">Approve action</button>
+            </div>
+          </div>
+          <div class="feedback-row">
+            <span>Was this intervention useful?</span>
+            <div><button data-rating="useful" aria-label="Mark useful">Useful</button><button data-rating="noise" aria-label="Mark as noise">Noise</button></div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="score-panel" aria-labelledby="score-title">
+        <div class="panel-heading">
+          <div><p class="eyebrow"><span>05</span> Shadow score</p><h2 id="score-title">Is it helping?</h2></div>
+        </div>
+        <p class="score-intro">The goal is not maximum activity. It is fewer, better interventions.</p>
+        <div class="score-main"><strong id="utility-score">—</strong><span>utility<br>signal</span></div>
+        <div class="metric-list">
+          <div><span>Useful interventions</span><strong id="metric-useful">0</strong></div>
+          <div><span>False interruptions</span><strong id="metric-noise">0</strong></div>
+          <div><span>Human escalations</span><strong id="metric-escalations">0</strong></div>
+          <div><span>Observed in shadow</span><strong id="metric-shadowed">0</strong></div>
+        </div>
+        <p class="score-note">A quiet agent can be a successful agent. “No action” belongs in the audit record too.</p>
+      </aside>
+    </section>
+
+    <section class="manifesto">
+      <p class="eyebrow"><span>06</span> Operating thesis</p>
+      <blockquote>“Autonomy is not the absence of people. It is the careful design of when a person should matter.”</blockquote>
+      <a href="/blog.html">Read the field note <span>→</span></a>
+    </section>
+  </main>
+
+  <dialog id="event-dialog">
+    <form id="event-form" method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">Simulate a change</p><h2>Inject an event</h2></div><button type="button" id="close-dialog" aria-label="Close">×</button></div>
+      <label>Event type<select name="type"><option value="deploy.failed">Deployment failed</option><option value="workflow.stalled">Workflow stalled</option><option value="threshold.breached">Threshold breached</option><option value="document.uploaded">Document uploaded</option><option value="support.sla_risk">Support SLA risk</option></select></label>
+      <label>Source<input name="source" value="demo.system" required></label>
+      <label>What changed?<textarea name="summary" rows="3" required>Payment reconciliation has been stalled for 61 minutes</textarea></label>
+      <div class="dialog-actions"><button type="button" class="button button-ghost" id="cancel-dialog">Cancel</button><button type="submit" class="button button-primary">Send to signal bus</button></div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
