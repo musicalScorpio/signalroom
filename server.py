@@ -47,12 +47,16 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         print(f"[{self.log_date_time_string()}] {format % args}")
 
+    def end_headers(self) -> None:
+        # The control room and its JavaScript must always be from the same build.
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        super().end_headers()
+
     def _json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
