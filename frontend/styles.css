@@ -228,9 +228,9 @@ dialog > p { color:var(--muted); }
 dialog pre { max-height:62vh; }
 .dialog-heading { display:flex; justify-content:space-between; gap:20px; align-items:start; }
 .icon-button { border:0; background:transparent; font-size:34px; cursor:pointer; }
-.toast { position:fixed; right:22px; bottom:22px; z-index:40; max-width:380px; padding:12px 15px; border:1.5px solid var(--ink); background:var(--acid); box-shadow:4px 4px 0 var(--ink); font:11px var(--mono); transform:translateY(120px); opacity:0; transition:.25s; }
+.toast { position:fixed; right:22px; bottom:22px; z-index:40; max-width:380px; padding:12px 15px; border:1.5px solid var(--ink); background:var(--acid); color:var(--ink); box-shadow:4px 4px 0 var(--ink); font:600 11px/1.5 var(--mono); transform:translateY(120px); opacity:0; transition:.25s; }
 .toast.show { transform:translateY(0); opacity:1; }
-.toast.error { background:var(--coral); }
+.toast.error { background:var(--coral); color:#11130f; }
 
 @keyframes glow { 50% { box-shadow:0 0 0 11px rgba(215,255,85,0); } }
 @keyframes pulse-text { 50% { opacity:.45; } }
