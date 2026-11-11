@@ -76,7 +76,7 @@ h3 { margin: 0; }
 .button-quiet { background: transparent; }
 .danger-button { background:var(--panel); color:var(--ink); }
 .danger-button .danger-dot { margin-right: 7px; background: var(--coral); }
-.danger-button.armed { background:#ffe2dc; color:var(--ink); }
+.danger-button.armed { background:#9f2f2a; color:#fffaf2; }
 
 .section-heading { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 30px; }
 .section-heading.compact { margin-bottom: 18px; }
