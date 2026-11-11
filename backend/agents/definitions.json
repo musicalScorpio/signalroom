@@ -20,13 +20,14 @@
     "accent": "blue"
   },
   "repair": {
-    "version": "1.0.0",
+    "version": "2.0.0",
     "name": "Repair Agent",
-    "purpose": "Create a minimal backward-compatible patch on an isolated branch.",
-    "system_prompt": "You are a software repair agent. Produce the smallest backward-compatible change, add regression coverage, run tests, and commit only inside the assigned worktree.",
-    "tools": ["code.patch", "tests.run", "git.commit"],
-    "required_tools": ["code.patch", "tests.run", "git.commit"],
-    "max_turns": 6,
+    "purpose": "Diagnose the recorded failure and author a minimal backward-compatible source repair on an isolated branch.",
+    "system_prompt": "You are the code-fixing agent. Inspect the bounded repository evidence, reason from the failing tests and contracts, and author the complete replacement source yourself. Call code.inspect first. Then call code.patch with file=order_service.py, replacement_content containing your complete implementation, and a concise rationale. Run tests after every patch. If tests fail, use the returned failure to author a corrected replacement and test again. Call git.commit only after the latest tests pass. Never invent test results, never use an unrestricted shell, and never ask a tool to supply a predefined fix.",
+    "tools": ["code.inspect", "code.patch", "tests.run", "git.commit"],
+    "required_tools": ["code.inspect", "code.patch", "tests.run", "git.commit"],
+    "requires_model": true,
+    "max_turns": 10,
     "accent": "acid"
   },
   "review": {

@@ -13,6 +13,7 @@ from backend.agents.tools.repair_lab import (
     apply_repair,
     commit_repair,
     git_history,
+    inspect_code,
     inspect_contract,
     logs,
     merge,
@@ -29,12 +30,21 @@ TOOLS = {
     "logs.read": logs,
     "contract.inspect": inspect_contract,
     "git.history": git_history,
+    "code.inspect": inspect_code,
     "code.patch": apply_repair,
     "tests.run": run_tests,
     "git.commit": commit_repair,
     "review.diff": review_diff,
     "verify.main": verify_main,
 }
+
+
+def execute_scoped_tool(tool: str, case_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    if tool == "code.patch":
+        return apply_repair(case_id, arguments)
+    if arguments:
+        raise ValueError(f"Tool {tool} does not accept arguments")
+    return TOOLS[tool](case_id)
 
 
 @activity.defn(name="prepare_repair_case")
@@ -73,7 +83,17 @@ async def agent_tool_activity(input: dict[str, Any]) -> dict[str, Any]:
     store = case_store()
     store.agent(input["case_id"], input["agent_id"], status="using_tool", active_tool=tool)
     store.timeline(input["case_id"], "tool", f"{input['definition']['name']} called {tool}", "Executing a scoped local tool.", input.get("arguments", {}), status="running")
-    result = await asyncio.to_thread(TOOLS[tool], input["case_id"])
+    try:
+        result = await asyncio.to_thread(execute_scoped_tool, tool, input["case_id"], input.get("arguments", {}))
+    except (SyntaxError, ValueError) as error:
+        if tool != "code.patch":
+            raise
+        result = {
+            "success": False,
+            "error_type": type(error).__name__,
+            "error": str(error),
+            "message": "The guarded patch validator rejected the model-authored source; the error is returned to Ollama for another repair turn.",
+        }
     observation = {"tool": tool, "arguments": input.get("arguments", {}), "result": result}
     current = store.get(input["case_id"]) or {}
     agent = current.get("agents", {}).get(input["agent_id"], {})

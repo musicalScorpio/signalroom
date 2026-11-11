@@ -30,7 +30,7 @@ The included scenario begins when Inventory Service contract v2 breaks checkout.
 
 1. A runtime failure becomes a durable case.
 2. Two investigation agents independently reproduce the failure and inspect contract history.
-3. A Repair Agent creates a backward-compatible patch on an isolated Git branch.
+3. The Repair Agent sends the evidence and bounded repository contents to Ollama, which diagnoses the defect and authors the replacement source.
 4. An Independent Review Agent inspects the exact diff and reruns the tests.
 5. Temporal waits durably for a human to approve the exact commit SHA.
 6. An idempotent Activity merges only the reviewed commit.
@@ -57,7 +57,7 @@ flowchart LR
     subgraph service ["Agent Execution Plane"]
         api["SignalRoom API and Temporal client"]
         supervisor["Worker supervisor"]
-        worker["Temporal Worker: orchestrator, five bounded agents, and typed Activities"]
+        worker["Temporal Worker: orchestrator, five bounded agents, typed Activities, and patch validator"]
     end
 
     subgraph async ["Durable Control Plane"]
@@ -70,7 +70,7 @@ flowchart LR
     end
 
     subgraph external ["Local Model Runtime"]
-        ollama["Ollama with an open-weight model"]
+        ollama["Ollama: local reasoning and source-code generation"]
     end
 
     browser -->|"HTTP actions and live polling"| http
@@ -80,8 +80,8 @@ flowchart LR
     supervisor -->|"Spawns and respawns the process"| worker
     api -->|"Reads and writes the UI projection"| sqlite
     worker -->|"Records agents, evidence, and stages"| sqlite
-    worker -->|"Runs scoped repair tools"| gitlab
-    worker -.->|"Ollama: structured JSON turns"| ollama
+    worker -->|"Validates and applies model-authored source"| gitlab
+    worker -.->|"Ollama: inspect, diagnose, author, and iterate"| ollama
 ~~~
 
 ### What each part owns
@@ -91,8 +91,8 @@ flowchart LR
 | SignalRoom API | Event intake, case creation, operator endpoints, Temporal client calls | Workflow scheduling or agent reasoning |
 | Temporal Server | Workflow Event History, task queues, retries, durable waits, Signals | Deciding whether a patch is correct |
 | Temporal Worker | Workflow and Activity execution, child Agent Workflows, tool dispatch | Durable history after the process dies |
-| Agent harness | Prompt construction, JSON command validation, tool allowlists, turn limits | Unrestricted shell access |
-| Ollama model | Structured reasoning turns inside an agent contract | Orchestration, persistence, or authority to merge |
+| Agent harness | Context assembly, command validation, tool schemas, path restrictions, syntax checks, and turn limits | Authoring the repair |
+| Ollama model | Failure diagnosis, tool selection, and the complete replacement source | Orchestration, persistence, direct file access, or authority to merge |
 | SQLite | Fast operator-facing projection of cases, evidence, agents, and timeline | Workflow recovery |
 | Per-case Git lab | Source-of-truth branch, commit, diff, tests, merge, and verification artifacts | Temporal control flow |
 | Worker supervisor | Local process monitoring and respawn | Workflow replay |
@@ -119,7 +119,7 @@ Agents are versioned definitions in [backend/agents/definitions.json](backend/ag
 | --- | --- | --- |
 | Reproduction Agent | Reproduce the failure and establish a factual signature | `tests.reproduce`, `logs.read` |
 | Change Intelligence Agent | Identify contract drift and affected code paths | `contract.inspect`, `git.history` |
-| Repair Agent | Create, test, and commit the smallest compatible fix | `code.patch`, `tests.run`, `git.commit` |
+| Repair Agent | Inspect the bounded repository, author source with Ollama, test it, and commit the smallest compatible fix | `code.inspect`, `code.patch`, `tests.run`, `git.commit` |
 | Independent Review Agent | Review the exact commit and independently rerun tests | `review.diff`, `tests.run` |
 | Outcome Verification Agent | Verify merged `main` against the original failure | `verify.main` |
 
@@ -131,7 +131,20 @@ Each definition includes:
 - a maximum turn count;
 - a version and UI identity.
 
-The model never receives a general-purpose shell. It returns a structured JSON command, the harness validates it, and a typed Temporal Activity executes the corresponding scoped tool. Invalid, incomplete, or unavailable model output falls back to a deterministic safe policy, which is recorded in the evidence trail.
+The model never receives a general-purpose shell. It returns a structured JSON command, the harness validates it, and a typed Temporal Activity executes the corresponding scoped tool. Read-only agents can use the deterministic policy in degraded test mode. The Repair Agent cannot: it requires valid Ollama-authored source and stops rather than substituting a predefined fix.
+
+### Where the repair code comes from
+
+There is no fixed solution inside `code.patch`. The repair loop is:
+
+1. `code.inspect` returns the allowlisted source, dependency, tests, and runtime log.
+2. Ollama diagnoses the failure and calls `code.patch` with a complete `replacement_content` value that it authored.
+3. The patch tool restricts the target path, enforces a size limit, compiles the proposed Python, applies it on an isolated branch, and records its SHA-256 and diff.
+4. `tests.run` returns real test output to Ollama.
+5. If tests fail, Ollama may author another replacement and test again.
+6. `git.commit` is permitted only when the latest test run passed after the latest patch.
+
+Temporal records every model command and tool result, so a replacement Worker can resume the loop without losing completed evidence.
 
 ## Human authority and evidence
 
@@ -201,7 +214,7 @@ Open:
 
 The launcher starts or reuses the Temporal development container, synchronizes Python dependencies, starts the supervised Worker, and serves the API and UI.
 
-Ollama is the reasoning layer for the five agents. If Ollama is unavailable, SignalRoom enters a clearly recorded deterministic fallback so orchestration, recovery, approvals, and tool contracts can still be tested. That degraded mode does **not** perform model reasoning and is not the full agentic demonstration.
+Ollama is the reasoning and code-generation layer. If Ollama is unavailable, read-only workflow mechanics can still be exercised in degraded test mode, but the Repair Agent will not create or commit a patch. SignalRoom never substitutes placeholder repair code.
 
 For a conventional pip environment:
 
@@ -239,7 +252,7 @@ Run the unit, integration, and Playwright suites:
 ./scripts/test.sh
 ~~~
 
-Coverage includes agent contracts, replay-safe model output, SQLite projections, real Git repair and merge behavior, HTTP-to-Temporal handoff, Worker recovery reconciliation, live runtime health, durable payload disclosures, responsive timeline layout, owner-color legends, and the crash control.
+Coverage includes agent contracts, model-required repair enforcement, guarded model-authored patches, SQLite projections, real Git repair and merge behavior, HTTP-to-Temporal handoff, Worker recovery reconciliation, live runtime health, durable payload disclosures, responsive timeline layout, owner-color legends, and the crash control.
 
 ## Inspect local state
 
@@ -310,7 +323,7 @@ Generated runtime data lives under `.signalroom/` and is excluded from Git.
 ## Design boundaries
 
 - Temporal coordinates deterministic control flow; it does not judge code correctness.
-- Model output proposes a command; it is never treated as evidence by itself.
+- Ollama authors the repair source, but its output is not accepted as evidence until guarded tools apply it and tests pass.
 - Only allowlisted tools can produce evidence or mutate the repair lab.
 - The Review Agent cannot edit code.
 - Human approval names an immutable commit, not a vague recommendation.

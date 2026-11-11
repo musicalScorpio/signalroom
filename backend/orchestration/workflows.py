@@ -40,7 +40,7 @@ class AgentWorkflow:
             command = await workflow.execute_activity(
                 "agent_model_turn",
                 {**input, "turn": turn, "observations": observations},
-                start_to_close_timeout=timedelta(seconds=60), retry_policy=ACTIVITY_RETRY,
+                start_to_close_timeout=timedelta(seconds=180), retry_policy=ACTIVITY_RETRY,
             )
             if command.get("type") == "call_tool":
                 self.state.update({"status": "using_tool", "active_tool": command["tool"]})

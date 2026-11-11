@@ -10,7 +10,7 @@ flowchart LR
     subgraph service ["Agent Execution Plane"]
         api["SignalRoom API and Temporal client"]
         supervisor["Worker supervisor"]
-        worker["Temporal Worker: orchestrator, five bounded agents, and typed Activities"]
+        worker["Temporal Worker: orchestrator, five bounded agents, typed Activities, and patch validator"]
     end
 
     subgraph async ["Durable Control Plane"]
@@ -23,7 +23,7 @@ flowchart LR
     end
 
     subgraph external ["Local Model Runtime"]
-        ollama["Ollama with an open-weight model"]
+        ollama["Ollama: local reasoning and source-code generation"]
     end
 
     browser -->|"HTTP actions and live polling"| http
@@ -33,5 +33,5 @@ flowchart LR
     supervisor -->|"Spawns and respawns the process"| worker
     api -->|"Reads and writes the UI projection"| sqlite
     worker -->|"Records agents, evidence, and stages"| sqlite
-    worker -->|"Runs scoped repair tools"| gitlab
-    worker -.->|"Ollama: structured JSON turns"| ollama
+    worker -->|"Validates and applies model-authored source"| gitlab
+    worker -.->|"Ollama: inspect, diagnose, author, and iterate"| ollama

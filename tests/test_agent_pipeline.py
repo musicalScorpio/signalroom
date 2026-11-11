@@ -11,6 +11,31 @@ from backend.orchestration.workflows import normalize_agent_result
 from backend.storage.case_store import CaseStore
 
 
+MODEL_AUTHORED_REPAIR = '''"""Order service supporting inventory contract versions one and two."""
+
+from inventory_service import get_inventory
+
+
+def available_quantity(inventory: dict) -> int:
+    if "available_quantity" in inventory:
+        return int(inventory["available_quantity"])
+    stock = inventory.get("stock")
+    if isinstance(stock, dict) and "on_hand" in stock and "reserved" in stock:
+        return max(0, int(stock["on_hand"]) - int(stock["reserved"]))
+    raise ValueError("Unsupported inventory contract")
+
+
+def can_fulfill(sku: str, quantity: int) -> bool:
+    return available_quantity(get_inventory(sku)) >= quantity
+
+
+def checkout(sku: str, quantity: int) -> dict:
+    if not can_fulfill(sku, quantity):
+        return {"status": "rejected", "reason": "insufficient_stock"}
+    return {"status": "accepted", "sku": sku, "quantity": quantity}
+'''
+
+
 class AgentPipelineTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
@@ -53,6 +78,12 @@ class AgentPipelineTests(unittest.TestCase):
         self.assertEqual(normalized["model_output"], "All tests passed.")
         self.assertEqual(normalized["summary"], "Agent completed")
 
+    def test_repair_agent_cannot_use_deterministic_fallback(self):
+        definition = load_definitions()["repair"]
+        with patch.dict(os.environ, {"SIGNALROOM_AGENT_MODEL": "policy"}):
+            with self.assertRaisesRegex(RuntimeError, "requires Ollama"):
+                model_turn(definition, {"case_id": "test"}, [{"tool": "code.inspect", "result": {}}])
+
     def test_case_store_preserves_projection_and_timeline(self):
         store = CaseStore(self.root / "cases.db")
         store.create({"id": "case_test", "title": "Test", "status": "queued", "agents": {}})
@@ -87,8 +118,15 @@ class AgentPipelineTests(unittest.TestCase):
             case_id = "case_integration"
             prepared = repair_lab.prepare_case(case_id)
             self.assertNotEqual(prepared["failure"]["exit_code"], 0)
-            repair = repair_lab.apply_repair(case_id)
+            inspection = repair_lab.inspect_code(case_id)
+            self.assertEqual(inspection["editable_files"], ["order_service.py"])
+            repair = repair_lab.apply_repair(case_id, {
+                "file": "order_service.py",
+                "replacement_content": MODEL_AUTHORED_REPAIR,
+                "rationale": "Support both observed inventory contracts.",
+            })
             self.assertIn("available_quantity", repair["patch"])
+            self.assertTrue(repair["model_authored"])
             self.assertEqual(repair_lab.run_tests(case_id)["exit_code"], 0)
             commit = repair_lab.commit_repair(case_id)
             review = repair_lab.review_diff(case_id)
@@ -98,6 +136,15 @@ class AgentPipelineTests(unittest.TestCase):
             verified = repair_lab.verify_main(case_id)
             self.assertTrue(verified["success"])
             self.assertEqual(verified["checkout_response"]["status"], "accepted")
+
+    def test_model_patch_tool_rejects_unscoped_or_missing_source(self):
+        with patch.object(repair_lab, "LAB_ROOT", self.root / "repair-lab"):
+            case_id = "case_guardrails"
+            repair_lab.prepare_case(case_id)
+            with self.assertRaisesRegex(ValueError, "only replace order_service.py"):
+                repair_lab.apply_repair(case_id, {"file": "inventory_service.py", "replacement_content": "pass\n"})
+            with self.assertRaisesRegex(ValueError, "replacement_content"):
+                repair_lab.apply_repair(case_id, {"file": "order_service.py", "replacement_content": ""})
 
 
 if __name__ == "__main__":

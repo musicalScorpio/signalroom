@@ -16,7 +16,7 @@ const state = {
 const stages = [
   { id: "event", label: "Event", owner: "Source system", detail: "A synthetic checkout request exposes a real Inventory v2 contract failure." },
   { id: "investigate", label: "Investigate", owner: "2 child Workflows", detail: "Reproduction and change-intelligence agents gather independent evidence in parallel." },
-  { id: "repair", label: "Repair", owner: "Repair Agent", detail: "A bounded agent patches an isolated Git branch, runs tests, and creates a real commit." },
+  { id: "repair", label: "Repair", owner: "Ollama + Repair Agent", detail: "Ollama inspects the evidence, authors the replacement source, then scoped tools validate, test, and commit it on an isolated branch." },
   { id: "review", label: "Review", owner: "Review Agent", detail: "An independent agent inspects the exact diff and reruns the regression suite." },
   { id: "human", label: "Human", owner: "You + Temporal", detail: "Temporal waits durably for approval of the exact reviewed commit SHA." },
   { id: "merge", label: "Merge", owner: "Merge Activity", detail: "An idempotent Activity verifies the approved SHA and merges it to main." },
@@ -98,11 +98,11 @@ function renderRuntime() {
   $("#worker-status").className = workerRestarting ? "restarting" : workerOnline ? "" : "offline";
   $("#worker-detail").textContent = worker.worker_pid ? `PID ${worker.worker_pid} · executes tasks` : workerRestarting ? "Supervisor is replacing the process" : "No Worker is polling";
   $("#restart-count").textContent = `${worker.restart_count || 0} restart${worker.restart_count === 1 ? "" : "s"}`;
-  $("#ollama-status").textContent = ollama.model_available ? short(ollama.model, 22) : "Safe fallback";
+  $("#ollama-status").textContent = ollama.model_available ? short(ollama.model, 22) : "Ollama required";
   $("#ollama-status").className = ollama.model_available ? "" : "offline";
   $("#ollama-detail").textContent = ollama.model_available
-    ? "Local model · JSON commands"
-    : ollama.connected ? `${ollama.model} is not pulled` : "Ollama offline · deterministic tool policy";
+    ? "Local reasoning · model-authored code"
+    : ollama.connected ? `${ollama.model} is not pulled · repair disabled` : "Ollama offline · repair disabled";
   $("#runtime-indicator").textContent = temporalOnline && workerOnline ? "Temporal + Worker online" : workerRestarting ? "Worker recovery in progress" : "Runtime needs attention";
   $("#header-dot").className = `status-dot ${temporalOnline && workerOnline ? "online" : "offline"}`;
 

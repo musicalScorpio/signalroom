@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -34,31 +35,6 @@ from inventory_service import get_inventory
 def can_fulfill(sku: str, quantity: int) -> bool:
     inventory = get_inventory(sku)
     return inventory["available_quantity"] >= quantity
-
-
-def checkout(sku: str, quantity: int) -> dict:
-    if not can_fulfill(sku, quantity):
-        return {"status": "rejected", "reason": "insufficient_stock"}
-    return {"status": "accepted", "sku": sku, "quantity": quantity}
-'''
-
-FIXED_ORDER_SOURCE = '''"""Order service with a backward-compatible inventory adapter."""
-
-from inventory_service import get_inventory
-
-
-def available_quantity(inventory: dict) -> int:
-    """Normalize inventory v1 and v2 contracts without hiding malformed data."""
-    if "available_quantity" in inventory:
-        return int(inventory["available_quantity"])
-    stock = inventory.get("stock")
-    if isinstance(stock, dict) and "on_hand" in stock and "reserved" in stock:
-        return max(0, int(stock["on_hand"]) - int(stock["reserved"]))
-    raise ValueError("Unsupported inventory contract")
-
-
-def can_fulfill(sku: str, quantity: int) -> bool:
-    return available_quantity(get_inventory(sku)) >= quantity
 
 
 def checkout(sku: str, quantity: int) -> dict:
@@ -151,20 +127,55 @@ def inspect_contract(case_id: str) -> dict[str, Any]:
     }
 
 
+def inspect_code(case_id: str) -> dict[str, Any]:
+    """Return the bounded repair surface that the model is allowed to change."""
+    repo = repo_for(case_id)
+    return {
+        "editable_files": ["order_service.py"],
+        "order_service.py": (repo / "order_service.py").read_text(encoding="utf-8"),
+        "inventory_service.py": (repo / "inventory_service.py").read_text(encoding="utf-8"),
+        "tests/test_contract.py": (repo / "tests" / "test_contract.py").read_text(encoding="utf-8"),
+        "runtime.log": (repo / "runtime.log").read_text(encoding="utf-8"),
+    }
+
+
 def git_history(case_id: str) -> dict[str, Any]:
     return _run(repo_for(case_id), ["git", "log", "--oneline", "--decorate", "-5"])
 
 
-def apply_repair(case_id: str) -> dict[str, Any]:
+def apply_repair(case_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Validate and apply source authored by the Repair Agent's Ollama model."""
     repo = repo_for(case_id)
+    file_name = arguments.get("file")
+    replacement = arguments.get("replacement_content")
+    rationale = arguments.get("rationale", "")
+    if file_name != "order_service.py":
+        raise ValueError("Repair Agent may only replace order_service.py")
+    if not isinstance(replacement, str) or not replacement.strip():
+        raise ValueError("code.patch requires non-empty replacement_content authored by the model")
+    if len(replacement.encode("utf-8")) > 50_000:
+        raise ValueError("Model-authored replacement exceeds the 50 KB repair limit")
+    compile(replacement, file_name, "exec")
+
     branch = f"signalroom/fix-contract-{case_id[-6:]}"
     existing = _run(repo, ["git", "branch", "--list", branch])["output"]
     if existing:
         _run(repo, ["git", "checkout", branch])
     else:
         _run(repo, ["git", "checkout", "-b", branch])
-    (repo / "order_service.py").write_text(FIXED_ORDER_SOURCE, encoding="utf-8")
-    return {"branch": branch, "file": "order_service.py", "patch": _run(repo, ["git", "diff", "--", "order_service.py"])["output"]}
+    (repo / file_name).write_text(replacement, encoding="utf-8")
+    patch = _run(repo, ["git", "diff", "--", file_name])["output"]
+    if not patch:
+        raise ValueError("Model-authored replacement produced no source change")
+    return {
+        "success": True,
+        "branch": branch,
+        "file": file_name,
+        "patch": patch,
+        "rationale": rationale,
+        "model_authored": True,
+        "content_sha256": hashlib.sha256(replacement.encode("utf-8")).hexdigest(),
+    }
 
 
 def run_tests(case_id: str) -> dict[str, Any]:
