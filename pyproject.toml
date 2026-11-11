@@ -7,5 +7,10 @@ dependencies = [
   "temporalio>=1.16.0,<2",
 ]
 
+[dependency-groups]
+dev = [
+  "playwright==1.65.0",
+]
+
 [tool.uv]
 package = false

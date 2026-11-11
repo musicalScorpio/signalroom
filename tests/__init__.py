@@ -1,0 +1,1 @@
+"""SignalRoom test suite."""

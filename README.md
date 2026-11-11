@@ -155,6 +155,23 @@ python -m pip install -r requirements.txt
 
 The dependency versions in requirements.txt match uv.lock. The launcher still uses uv by default because it also starts and coordinates the local services.
 
+### Tests
+
+Install the development dependency and Chromium once:
+
+~~~bash
+uv sync
+uv run playwright install chromium
+~~~
+
+With SignalRoom running on port 4173, run every unit, integration, and Playwright test:
+
+~~~bash
+./scripts/test.sh
+~~~
+
+The suite covers bounded agent contracts, SQLite projections, the real Git repair/merge flow, Worker recovery reconciliation, live Temporal/Worker health, timeline owner colors, persistent payload disclosures during polling, and the animated SignalRoom mark. Set `SIGNALROOM_BASE_URL` to test another local port.
+
 Open:
 
 - SignalRoom: [http://127.0.0.1:4173](http://127.0.0.1:4173)
