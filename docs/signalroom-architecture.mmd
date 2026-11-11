@@ -1,24 +1,37 @@
 flowchart LR
-    browser["SignalRoom UI"] -->|"POST /api/lab/run"| api["Local HTTP API"]
-    api -->|"Start Workflow / send Signal"| client["Temporal gRPC client"]
-    client --> temporal["Temporal service<br/>Event History + task queues"]
+    subgraph client ["Operator Surface"]
+        browser["SignalRoom control room"]
+    end
 
-    supervisor["Worker supervisor"] -->|"spawn / respawn"| worker["Temporal Worker"]
-    temporal -->|"Workflow + Activity tasks"| worker
-    worker --> parent["IncidentCaseWorkflow"]
-    parent -->|"parallel child Workflows"| agents["Investigator + Change Intelligence"]
-    parent --> repair["Repair Agent"]
-    parent --> review["Review Agent"]
-    parent -->|"durable wait"| human["Human merge approval"]
-    parent --> verify["Verification Agent"]
+    subgraph gateway ["Local Interface"]
+        http["HTTP and static web server"]
+    end
 
-    agents --> activities["Typed Activities + allowlisted tools"]
-    repair --> activities
-    review --> activities
-    verify --> activities
-    activities --> harness["Structured agent harness"]
-    harness -->|"local JSON turns"| ollama["Ollama model"]
-    activities --> lab["Isolated Git repair lab<br/>code + tests + branch + commit"]
-    activities --> sqlite["SQLite UI projection<br/>cases + evidence + timeline"]
-    sqlite --> api
-    human -->|"approve exact SHA"| api
+    subgraph service ["Agent Execution Plane"]
+        api["SignalRoom API and Temporal client"]
+        supervisor["Worker supervisor"]
+        worker["Temporal Worker: orchestrator, five bounded agents, and typed Activities"]
+    end
+
+    subgraph async ["Durable Control Plane"]
+        temporal["Temporal Server: Workflow Event History, task queues, retries, and Signals"]
+    end
+
+    subgraph datastore ["Evidence and Artifacts"]
+        sqlite["SQLite operator projection: cases, agents, evidence, and timeline"]
+        gitlab["Per-case Git repair lab: code, tests, branch, commit, and merge"]
+    end
+
+    subgraph external ["Local Model Runtime"]
+        ollama["Ollama with an open-weight model"]
+    end
+
+    browser -->|"HTTP actions and live polling"| http
+    http -->|"Routes UI and API requests"| api
+    api -.->|"gRPC: start, query, and Signal"| temporal
+    temporal -.->|"Schedules Workflow and Activity tasks"| worker
+    supervisor -->|"Spawns and respawns the process"| worker
+    api -->|"Reads and writes the UI projection"| sqlite
+    worker -->|"Records agents, evidence, and stages"| sqlite
+    worker -->|"Runs scoped repair tools"| gitlab
+    worker -.->|"Ollama: structured JSON turns"| ollama
