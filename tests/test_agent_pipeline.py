@@ -4,10 +4,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from signalroom.agents.harness import load_definitions, model_turn
-from signalroom.agents.tools import repair_lab
-from signalroom.orchestration.workflows import normalize_agent_result
-from signalroom.storage.case_store import CaseStore
+from backend.agents.harness import load_definitions, model_turn
+from backend.agents.tools import repair_lab
+from backend.orchestration.workflows import normalize_agent_result
+from backend.storage.case_store import CaseStore
 
 
 class AgentPipelineTests(unittest.TestCase):

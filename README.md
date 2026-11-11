@@ -46,32 +46,27 @@ The application code is grouped by responsibility:
 
 ~~~text
 signalroom/
-├── api/
-│   └── server.py                 HTTP API and static UI server
-├── agents/
-│   ├── definitions.json         Versioned prompts, tools, and turn limits
-│   ├── harness.py               Ollama JSON-command harness and validation
-│   └── tools/
-│       └── repair_lab.py        Git, code, test, commit, and verification tools
-├── orchestration/
-│   ├── workflows.py             Temporal orchestrator and child AgentWorkflow
-│   ├── activities.py            Model and tool Activities
-│   └── client.py                API-to-Temporal gRPC bridge
-├── runtime/
-│   ├── worker.py                Temporal Worker registration
-│   ├── supervisor.py            Worker crash recovery
-│   └── state.py                 Runtime status projection
-├── storage/
-│   └── case_store.py            SQLite case and evidence projection
-└── legacy/
-    ├── core.py                  Original generic event-to-outcome engine
-    ├── workflows.py             Original generic Temporal Workflow
-    └── activities.py            Original generic Activities
+├── backend/
+│   ├── api/                     HTTP API
+│   ├── agents/                  Definitions, Ollama harness, and tools
+│   ├── orchestration/           Temporal orchestrator, Activities, and client
+│   ├── runtime/                 Worker, supervisor, and process state
+│   ├── storage/                 SQLite projection store
+│   └── legacy/                  Original generic event demonstration
+├── frontend/                    HTML, CSS, JavaScript, and blog page
+├── infra/                       Local Temporal Compose configuration
+├── scripts/                     Development launcher
+├── tests/                       Unit and integration tests
+├── docs/                        Architecture source
+├── .signalroom/                 Hidden generated DB, Worker state, and repair labs
+├── pyproject.toml
+├── requirements.txt
+└── README.md
 ~~~
 
-The main orchestrator is [signalroom/orchestration/workflows.py](signalroom/orchestration/workflows.py). It defines the parent IncidentCaseWorkflow and the reusable child AgentWorkflow. The actual agents are defined in [signalroom/agents/definitions.json](signalroom/agents/definitions.json); their model harness and tools live beside those definitions.
+The main orchestrator is [backend/orchestration/workflows.py](backend/orchestration/workflows.py). It defines the parent IncidentCaseWorkflow and the reusable child AgentWorkflow. The actual agents are defined in [backend/agents/definitions.json](backend/agents/definitions.json); their model harness and tools live beside those definitions.
 
-The root server.py, worker.py, and worker_supervisor.py files are intentionally tiny compatibility entry points. Application logic lives inside the signalroom package.
+The repository root now contains only project-level documentation, dependency files, and top-level folders. Executable application code lives under backend, while browser code lives under frontend.
 
 ## Architecture
 
@@ -111,8 +106,8 @@ flowchart LR
 | Workflow position, completed Activity results, pending approval signal | Temporal Event History | Reconstruct execution after a Worker dies |
 | Case status, timeline, agent cards, evidence shown in the UI | SQLite agent_cases projection | Fast operator reads and local querying |
 | Code, branch, commits, test output | Per-case repository under .signalroom/repair-lab/ | Real repair artifact and source of Git truth |
-| Prompts, tools, evidence requirements, turn limits | signalroom/agents/definitions.json | Versionable agent definitions |
-| Worker process lifecycle and restart count | signalroom/runtime/supervisor.py state file | Local crash/recovery demonstration |
+| Prompts, tools, evidence requirements, turn limits | backend/agents/definitions.json | Versionable agent definitions |
+| Worker process lifecycle and restart count | backend/runtime/supervisor.py state file | Local crash/recovery demonstration |
 
 Deleting SQLite would remove the UI projection, but it is not what lets Temporal resume a Workflow. Deleting the Temporal container destroys this development server’s Workflow history.
 
@@ -202,7 +197,7 @@ The supervisor resurrects the process; Temporal preserves the work. Those are de
 SignalRoom’s projection:
 
 ~~~bash
-sqlite3 signalroom.db
+sqlite3 .signalroom/data/signalroom.db
 ~~~
 
 ~~~sql

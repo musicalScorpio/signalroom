@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from signalroom.legacy.core import Engine, OUTCOME_CONTRACTS, Store
-from signalroom.runtime.state import read_worker_state, safe_worker_pid, write_worker_state
+from backend.legacy.core import Engine, OUTCOME_CONTRACTS, Store
+from backend.runtime.state import read_worker_state, safe_worker_pid, write_worker_state
 
 
 SUMMARIES = {

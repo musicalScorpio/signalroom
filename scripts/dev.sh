@@ -54,7 +54,7 @@ fi
 
 uv sync
 
-export SIGNALROOM_DB="${SIGNALROOM_DB:-$PROJECT_DIR/signalroom.db}"
+export SIGNALROOM_DB="${SIGNALROOM_DB:-$PROJECT_DIR/.signalroom/data/signalroom.db}"
 export SIGNALROOM_ENABLE_CHAOS_DEMO="${SIGNALROOM_ENABLE_CHAOS_DEMO:-1}"
 export SIGNALROOM_AGENT_MODEL="${SIGNALROOM_AGENT_MODEL:-ollama}"
 export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:4b}"
@@ -65,7 +65,7 @@ else
   echo "Ollama is offline. Agents will use the same definitions with the deterministic safe policy."
 fi
 
-uv run python -m signalroom.runtime.supervisor &
+uv run python -m backend.runtime.supervisor &
 SUPERVISOR_PID=$!
 
 cleanup() {
@@ -73,4 +73,4 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-uv run python -m signalroom.api.server --port "$PORT"
+uv run python -m backend.api.server --port "$PORT"

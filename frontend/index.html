@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="SignalRoom turns local system events into durable, reviewable agent outcomes.">
+  <title>SignalRoom — Durable agent operations</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23171815'/%3E%3Cpath d='M13 42h8V29h-8zm15 0h8V14h-8zm15 0h8V23h-8z' fill='%23d7ff55'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/styles.css?v=agents-2">
+</head>
+<body>
+  <div class="noise" aria-hidden="true"></div>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="SignalRoom home"><span class="brand-mark"><i></i><i></i><i></i></span><span>SignalRoom</span></a>
+    <p class="runtime-label"><span class="status-dot" id="header-dot"></span><span id="runtime-indicator">Checking local runtime</span></p>
+    <div class="header-actions">
+      <button class="button button-quiet" id="definitions-button">Agent definitions</button>
+      <button class="button button-primary" id="trigger-button">Trigger incident <span>↗</span></button>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <p class="eyebrow"><span>01</span> Local durable-agent lab</p>
+      <div class="hero-grid">
+        <div>
+          <h1>A failure becomes<br>a durable <em>case.</em></h1>
+          <p class="hero-lede">Watch five bounded agents reproduce a real contract failure, create a Git repair, survive a dead Worker, request your approval, merge, and prove the outcome.</p>
+          <div class="hero-actions">
+            <button class="button button-primary button-large" id="hero-trigger">Run the repair pipeline <span>↗</span></button>
+            <span class="local-note">Runs only on this machine</span>
+          </div>
+        </div>
+        <div class="thesis-card">
+          <span>Event-to-Outcome thesis</span>
+          <strong>Less human initiation.<br>Never less accountability.</strong>
+          <p>Temporal remembers control flow. SignalRoom records operator evidence. Agents work through explicit tool contracts.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="runtime-section" aria-labelledby="runtime-title">
+      <div class="section-heading compact">
+        <div><p class="eyebrow"><span>02</span> Durable runtime</p><h2 id="runtime-title">Who owns what</h2></div>
+        <button class="button danger-button" id="kill-worker-button" disabled><span class="danger-dot"></span>Kill Agent Worker</button>
+      </div>
+      <div class="runtime-rail">
+        <article><span>Temporal service</span><strong id="temporal-status">Checking</strong><small>Workflow history + task scheduling</small></article>
+        <b>→</b>
+        <article><span>Agent Worker</span><strong id="worker-status">Checking</strong><small id="worker-detail">Executes workflow and activities</small></article>
+        <b>→</b>
+        <article><span>Ollama harness</span><strong id="ollama-status">Checking</strong><small id="ollama-detail">Structured local model turns</small></article>
+        <b>→</b>
+        <article><span>Recovery proof</span><strong id="restart-count">0 restarts</strong><small>Supervisor replaces the Worker process</small></article>
+      </div>
+    </section>
+
+    <section class="map-section" aria-labelledby="map-title">
+      <div class="section-heading">
+        <div><p class="eyebrow"><span>03</span> Live trace</p><h2 id="map-title">Event-to-Outcome Map</h2></div>
+        <p class="section-meta" id="case-meta">Trigger a case to see each durable transition.</p>
+      </div>
+      <div class="pipeline" id="pipeline" aria-live="polite"></div>
+      <div class="stage-inspector" id="stage-inspector">
+        <span>Stage</span>
+        <div><strong>Select a point in the map</strong><p>Its owner, evidence, and durable boundary will appear here.</p></div>
+        <b>Waiting</b>
+      </div>
+    </section>
+
+    <section class="workspace-grid">
+      <aside class="case-panel panel">
+        <div class="panel-heading"><div><p class="eyebrow"><span>04</span> Case queue</p><h2>Incidents</h2></div><span class="count" id="case-count">0</span></div>
+        <div class="case-list" id="case-list"><p class="empty">No cases yet.</p></div>
+      </aside>
+      <section class="case-workspace panel">
+        <div id="case-content" class="case-content empty-state">
+          <span class="empty-icon">↯</span><h2>No active case</h2>
+          <p>Trigger the synthetic contract failure. The repository, branch, commits, tests, and merge are real and isolated locally.</p>
+        </div>
+      </section>
+    </section>
+
+    <section class="agent-section" aria-labelledby="agents-title">
+      <div class="section-heading">
+        <div><p class="eyebrow"><span>05</span> Agent room</p><h2 id="agents-title">Bounded specialists</h2></div>
+        <p class="section-meta">Each agent has a versionable prompt, allowlisted tools, required evidence, and turn limit.</p>
+      </div>
+      <div class="agent-grid" id="agent-grid"></div>
+    </section>
+
+    <section class="architecture-section" aria-labelledby="architecture-title">
+      <div class="section-heading">
+        <div><p class="eyebrow"><span>06</span> System architecture</p><h2 id="architecture-title">Control flow vs. evidence</h2></div>
+        <p class="section-meta">Solid lines initiate work. Temporal records orchestration; SQLite projects evidence for the operator.</p>
+      </div>
+      <div class="architecture-scroll">
+        <div class="architecture-board" role="img" aria-label="SignalRoom local system architecture">
+          <div class="architecture-node acid"><span>Interface</span><strong>SignalRoom UI</strong><small>event + human approval</small></div>
+          <b>REST</b>
+          <div class="architecture-node"><span>Ingress</span><strong>Local API</strong><small>Temporal gRPC client</small></div>
+          <b>start / signal</b>
+          <div class="architecture-node dark"><span>Durable state</span><strong>Temporal</strong><small>history + task queues</small></div>
+          <b>workflow tasks</b>
+          <div class="architecture-node blue"><span>Execution</span><strong>Agent Worker</strong><small>parent + child workflows</small></div>
+          <b>activities</b>
+          <div class="architecture-node violet"><span>Bounded work</span><strong>Agent harness</strong><small>prompts + typed tools</small></div>
+          <div class="architecture-branches">
+            <div class="architecture-node mini"><strong>Ollama</strong><small>local model turns</small></div>
+            <div class="architecture-node mini"><strong>Git repair lab</strong><small>code, tests, commits</small></div>
+            <div class="architecture-node mini"><strong>SQLite</strong><small>UI projection</small></div>
+          </div>
+          <div class="supervisor-line"><span>Worker supervisor</span><b>respawns process only ↗</b></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="approval-panel" id="approval-panel" hidden aria-labelledby="approval-title">
+      <div class="approval-copy">
+        <p class="eyebrow"><span>Human gate</span> Temporal is waiting</p>
+        <h2 id="approval-title">Approve the exact reviewed commit?</h2>
+        <p>The Workflow is durably paused. Killing every Worker would not lose this decision point.</p>
+        <dl class="approval-facts" id="approval-facts"></dl>
+        <div class="approval-actions">
+          <button class="button button-primary" id="approve-button">Merge reviewed commit</button>
+          <button class="button danger-button" id="reject-button">Reject</button>
+        </div>
+      </div>
+      <div class="approval-evidence">
+        <div class="code-heading"><span>Reviewed diff</span><button class="copy-button" data-copy="diff-code">Copy</button></div>
+        <pre><code id="diff-code">Waiting for agent evidence…</code></pre>
+      </div>
+    </section>
+
+    <section class="evidence-grid">
+      <section class="evidence-panel panel">
+        <div class="panel-heading"><div><p class="eyebrow"><span>07</span> Evidence</p><h2>Tool results</h2></div></div>
+        <div class="evidence-tabs" id="evidence-tabs"></div>
+        <div class="evidence-viewer" id="evidence-viewer"><p class="empty">Agent tool results will appear here.</p></div>
+      </section>
+      <section class="timeline-panel panel">
+        <div class="panel-heading"><div><p class="eyebrow"><span>08</span> Durable record</p><h2>Case timeline</h2></div></div>
+        <ol class="timeline" id="timeline"><li class="empty">No transitions recorded.</li></ol>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="definitions-dialog">
+    <div class="dialog-heading"><div><p class="eyebrow"><span>Config</span> backend/agents/definitions.json</p><h2>Agent definitions</h2></div><button class="icon-button" id="close-definitions" aria-label="Close">×</button></div>
+    <p>These are runtime definitions—not presentation copy. Edit the JSON to change prompts, tools, required evidence, and turn limits.</p>
+    <div class="code-heading"><span>JSON</span><button class="copy-button" data-copy="definitions-code">Copy</button></div>
+    <pre><code id="definitions-code">Loading…</code></pre>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/app.js?v=agents-2"></script>
+</body>
+</html>

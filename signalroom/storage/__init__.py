@@ -1,1 +1,0 @@
-"""Operator-facing projection storage."""
