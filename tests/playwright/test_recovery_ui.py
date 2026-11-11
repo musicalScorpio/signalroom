@@ -114,6 +114,25 @@ class RecoveryUiTests(unittest.TestCase):
         self.assertEqual(len(set(colors.values())), 3, colors)
         self.assertEqual(colors["temporal"], "rgb(178, 154, 255)")
 
+    def test_evidence_payload_cannot_squash_case_timeline(self):
+        page = self.new_page()
+        page.set_viewport_size({"width": 1800, "height": 1000})
+        self.install_recovery_routes(page)
+        page.goto(BASE_URL, wait_until="domcontentloaded")
+
+        evidence = page.locator(".evidence-panel").bounding_box()
+        timeline = page.locator(".timeline-panel").bounding_box()
+        heading = page.locator(".timeline-panel h2").bounding_box()
+        self.assertGreaterEqual(timeline["width"], 460)
+        self.assertGreater(evidence["width"], timeline["width"])
+        self.assertGreater(heading["width"], 150)
+
+        page.set_viewport_size({"width": 1000, "height": 1000})
+        page.wait_for_timeout(100)
+        evidence = page.locator(".evidence-panel").bounding_box()
+        timeline = page.locator(".timeline-panel").bounding_box()
+        self.assertAlmostEqual(evidence["width"], timeline["width"], delta=2)
+
     def test_signalroom_mark_uses_moving_signal_animation(self):
         page = self.new_page()
         page.goto(BASE_URL, wait_until="domcontentloaded")
