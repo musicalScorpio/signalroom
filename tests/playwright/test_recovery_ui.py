@@ -128,6 +128,18 @@ class RecoveryUiTests(unittest.TestCase):
         )
         self.assertEqual(sweep, "signal-sweep")
 
+    def test_kill_worker_button_has_readable_dark_text(self):
+        page = self.new_page()
+        self.install_recovery_routes(page)
+        page.goto(BASE_URL, wait_until="domcontentloaded")
+        button = page.locator("#kill-worker-button")
+        expect(button).to_be_enabled()
+        styles = button.evaluate(
+            "element => ({color: getComputedStyle(element).color, background: getComputedStyle(element).backgroundColor})"
+        )
+        self.assertEqual(styles["color"], "rgb(23, 24, 21)")
+        self.assertEqual(styles["background"], "rgb(255, 226, 220)")
+
 
 if __name__ == "__main__":
     unittest.main()
