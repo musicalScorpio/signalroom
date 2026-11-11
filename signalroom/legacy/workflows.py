@@ -1,4 +1,4 @@
-"""Durable event-to-outcome workflow for ambient agents."""
+"""Legacy durable event-to-outcome workflow for generic ambient signals."""
 
 from __future__ import annotations
 

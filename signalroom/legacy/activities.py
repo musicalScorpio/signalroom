@@ -8,7 +8,7 @@ from typing import Any
 
 from temporalio import activity
 
-from signalroom_core import DEFAULT_DB, Engine, Store, context_for, utc_now, validate_signal
+from signalroom.legacy.core import DEFAULT_DB, Engine, Store, context_for, utc_now, validate_signal
 
 
 def store() -> Store:

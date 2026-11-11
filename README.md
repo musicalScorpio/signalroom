@@ -40,6 +40,39 @@ A successful case ends only when all of these facts exist:
 | Process recovery | Python Worker supervisor | Restarts a killed Worker while Temporal retains the authoritative Workflow state |
 | Runtime packaging | Docker or Colima, uv, and pip-compatible requirements | Runs Temporal locally and provides reproducible Python dependency installation |
 
+## Code structure
+
+The application code is grouped by responsibility:
+
+~~~text
+signalroom/
+├── api/
+│   └── server.py                 HTTP API and static UI server
+├── agents/
+│   ├── definitions.json         Versioned prompts, tools, and turn limits
+│   ├── harness.py               Ollama JSON-command harness and validation
+│   └── tools/
+│       └── repair_lab.py        Git, code, test, commit, and verification tools
+├── orchestration/
+│   ├── workflows.py             Temporal orchestrator and child AgentWorkflow
+│   ├── activities.py            Model and tool Activities
+│   └── client.py                API-to-Temporal gRPC bridge
+├── runtime/
+│   ├── worker.py                Temporal Worker registration
+│   ├── supervisor.py            Worker crash recovery
+│   └── state.py                 Runtime status projection
+├── storage/
+│   └── case_store.py            SQLite case and evidence projection
+└── legacy/
+    ├── core.py                  Original generic event-to-outcome engine
+    ├── workflows.py             Original generic Temporal Workflow
+    └── activities.py            Original generic Activities
+~~~
+
+The main orchestrator is [signalroom/orchestration/workflows.py](signalroom/orchestration/workflows.py). It defines the parent IncidentCaseWorkflow and the reusable child AgentWorkflow. The actual agents are defined in [signalroom/agents/definitions.json](signalroom/agents/definitions.json); their model harness and tools live beside those definitions.
+
+The root server.py, worker.py, and worker_supervisor.py files are intentionally tiny compatibility entry points. Application logic lives inside the signalroom package.
+
 ## Architecture
 
 The diagram source lives in [docs/signalroom-architecture.mmd](docs/signalroom-architecture.mmd).
@@ -78,8 +111,8 @@ flowchart LR
 | Workflow position, completed Activity results, pending approval signal | Temporal Event History | Reconstruct execution after a Worker dies |
 | Case status, timeline, agent cards, evidence shown in the UI | SQLite agent_cases projection | Fast operator reads and local querying |
 | Code, branch, commits, test output | Per-case repository under .signalroom/repair-lab/ | Real repair artifact and source of Git truth |
-| Prompts, tools, evidence requirements, turn limits | config/agents.json | Versionable agent definitions |
-| Worker process lifecycle and restart count | worker_supervisor.py state file | Local crash/recovery demonstration |
+| Prompts, tools, evidence requirements, turn limits | signalroom/agents/definitions.json | Versionable agent definitions |
+| Worker process lifecycle and restart count | signalroom/runtime/supervisor.py state file | Local crash/recovery demonstration |
 
 Deleting SQLite would remove the UI projection, but it is not what lets Temporal resume a Workflow. Deleting the Temporal container destroys this development server’s Workflow history.
 

@@ -1,4 +1,4 @@
-"""Durable Temporal parent/child Workflows for the multi-agent repair case."""
+"""The Temporal orchestrator: parent/child Workflows for multi-agent repair."""
 
 from __future__ import annotations
 

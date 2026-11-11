@@ -10,7 +10,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from signalroom_core import ROOT, utc_now
+from signalroom.legacy.core import ROOT, utc_now
 
 
 LAB_ROOT = ROOT / ".signalroom" / "repair-lab"

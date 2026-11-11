@@ -9,10 +9,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from signalroom_core import ROOT
-
-
-DEFINITIONS_PATH = ROOT / "config" / "agents.json"
+DEFINITIONS_PATH = Path(__file__).with_name("definitions.json")
 
 
 def load_definitions() -> dict[str, dict[str, Any]]:

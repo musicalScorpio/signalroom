@@ -9,7 +9,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from signalroom_core import DEFAULT_DB, utc_now
+from signalroom.legacy.core import DEFAULT_DB, utc_now
 
 
 _LOCK = threading.RLock()

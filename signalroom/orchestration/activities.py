@@ -7,9 +7,9 @@ from typing import Any
 
 from temporalio import activity
 
-from agent_harness import load_definitions, model_turn
-from agent_store import case_store
-from repair_lab import (
+from signalroom.agents.harness import load_definitions, model_turn
+from signalroom.storage.case_store import case_store
+from signalroom.agents.tools.repair_lab import (
     apply_repair,
     commit_repair,
     git_history,

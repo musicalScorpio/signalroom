@@ -11,8 +11,8 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from agent_workflows import IncidentCaseWorkflow
-from temporal_workflows import EventCaseWorkflow
+from signalroom.orchestration.workflows import IncidentCaseWorkflow
+from signalroom.legacy.workflows import EventCaseWorkflow
 
 
 class TemporalBridge:

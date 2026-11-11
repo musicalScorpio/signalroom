@@ -65,7 +65,7 @@ else
   echo "Ollama is offline. Agents will use the same definitions with the deterministic safe policy."
 fi
 
-uv run python worker_supervisor.py &
+uv run python -m signalroom.runtime.supervisor &
 SUPERVISOR_PID=$!
 
 cleanup() {
@@ -73,4 +73,4 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-uv run python server.py --port "$PORT"
+uv run python -m signalroom.api.server --port "$PORT"
