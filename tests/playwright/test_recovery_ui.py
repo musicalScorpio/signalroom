@@ -147,17 +147,18 @@ class RecoveryUiTests(unittest.TestCase):
         )
         self.assertEqual(sweep, "signal-sweep")
 
-    def test_kill_worker_button_has_high_contrast_danger_style(self):
+    def test_kill_worker_button_matches_theme_with_red_status_dot(self):
         page = self.new_page()
         self.install_recovery_routes(page)
         page.goto(BASE_URL, wait_until="domcontentloaded")
         button = page.locator("#kill-worker-button")
         expect(button).to_be_enabled()
         styles = button.evaluate(
-            "element => ({color: getComputedStyle(element).color, background: getComputedStyle(element).backgroundColor})"
+            "element => ({color: getComputedStyle(element).color, background: getComputedStyle(element).backgroundColor, dot: getComputedStyle(element.querySelector('.danger-dot')).backgroundColor})"
         )
-        self.assertEqual(styles["color"], "rgb(255, 250, 242)")
-        self.assertEqual(styles["background"], "rgb(159, 47, 42)")
+        self.assertEqual(styles["color"], "rgb(23, 24, 21)")
+        self.assertEqual(styles["background"], "rgb(215, 255, 85)")
+        self.assertEqual(styles["dot"], "rgb(255, 59, 48)")
 
 
 if __name__ == "__main__":
