@@ -30,6 +30,20 @@ const statusIndex = {
   rejected: 4, failed: 7,
 };
 
+const timelineKindLabels = {
+  signalroom: "SignalRoom",
+  temporal: "Temporal",
+  worker: "Worker",
+  event: "Event",
+  model: "Model",
+  tool: "Tool call",
+  tool_result: "Tool result",
+  handoff: "Handoff",
+  human: "Human",
+  git: "Git",
+  outcome: "Outcome",
+};
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
@@ -226,6 +240,11 @@ function renderTimeline() {
     state.expandedTimeline.add(details.dataset.timelineId);
   });
   const timeline = state.selected?.timeline || [];
+  const visibleKinds = [...new Set(timeline.map(item => item.kind || "unknown"))];
+  $("#timeline-legend").innerHTML = Object.keys(timelineKindLabels)
+    .filter(kind => visibleKinds.includes(kind))
+    .map(kind => `<span data-kind="${escapeHtml(kind)}">${escapeHtml(timelineKindLabels[kind])}</span>`)
+    .join("");
   if (!timeline.length) {
     $("#timeline").innerHTML = '<li class="empty">No transitions recorded.</li>';
     return;

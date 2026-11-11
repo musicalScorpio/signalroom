@@ -218,12 +218,17 @@ pre { margin:0; padding:16px; background:#11130f; color:#e9eddf; border:1px soli
 .timeline li:last-child::after { display:none; }
 .timeline li.interrupted::before { background:var(--coral); }
 .timeline li.running::before { background:var(--acid); animation:glow 1.2s infinite; }
-.timeline li[data-kind="signalroom"]::before { background:var(--acid); }
-.timeline li[data-kind="temporal"]::before { background:var(--violet); box-shadow:0 0 0 4px rgba(178,154,255,.2); }
-.timeline li[data-kind="worker"]::before { background:var(--coral); }
-.timeline li[data-kind="model"]::before { background:var(--blue); }
-.timeline li[data-kind="tool"]::before { background:var(--yellow); }
-.timeline li[data-kind="tool_result"]::before, .timeline li[data-kind="outcome"]::before { background:var(--green); }
+.timeline li[data-kind="signalroom"]::before, .timeline-legend [data-kind="signalroom"]::before { background:var(--acid); }
+.timeline li[data-kind="temporal"]::before, .timeline-legend [data-kind="temporal"]::before { background:var(--violet); box-shadow:0 0 0 4px rgba(178,154,255,.2); }
+.timeline li[data-kind="worker"]::before, .timeline-legend [data-kind="worker"]::before { background:var(--coral); }
+.timeline li[data-kind="event"]::before, .timeline-legend [data-kind="event"]::before { background:#ff9f43; }
+.timeline li[data-kind="model"]::before, .timeline-legend [data-kind="model"]::before { background:var(--blue); }
+.timeline li[data-kind="tool"]::before, .timeline-legend [data-kind="tool"]::before { background:var(--yellow); }
+.timeline li[data-kind="tool_result"]::before, .timeline-legend [data-kind="tool_result"]::before { background:#43c985; }
+.timeline li[data-kind="handoff"]::before, .timeline-legend [data-kind="handoff"]::before { background:#c3c6bc; }
+.timeline li[data-kind="human"]::before, .timeline-legend [data-kind="human"]::before { background:#ff9fc4; }
+.timeline li[data-kind="git"]::before, .timeline-legend [data-kind="git"]::before { background:var(--ink); }
+.timeline li[data-kind="outcome"]::before, .timeline-legend [data-kind="outcome"]::before { background:var(--green); }
 .timeline time { color:var(--muted); font:9px var(--mono); }
 .timeline strong { display:block; margin:3px 0; font-size:12px; }
 .timeline p { margin:0; color:var(--muted); font-size:11px; }
@@ -236,9 +241,6 @@ pre { margin:0; padding:16px; background:#11130f; color:#e9eddf; border:1px soli
 .timeline-legend { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; }
 .timeline-legend span { display:flex; align-items:center; gap:5px; color:var(--muted); font:8px var(--mono); text-transform:uppercase; }
 .timeline-legend span::before { content:""; width:8px; height:8px; border:1px solid var(--ink); border-radius:50%; }
-.timeline-legend .signalroom::before { background:var(--acid); }
-.timeline-legend .temporal::before { background:var(--violet); }
-.timeline-legend .worker::before { background:var(--coral); }
 .empty { color:var(--muted); padding:20px; font-size:12px; }
 
 dialog { width:min(920px,calc(100vw - 32px)); max-height:88vh; border:2px solid var(--ink); padding:24px; background:var(--paper); color:var(--ink); box-shadow:12px 12px 0 var(--ink); }

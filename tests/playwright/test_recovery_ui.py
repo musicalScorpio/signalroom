@@ -20,6 +20,14 @@ RECOVERY_CASE = {
     "evidence": {},
     "approval": {"state": "pending"},
     "timeline": [
+        {"id": "event-1", "kind": "event", "status": "complete", "at": "2026-01-01T00:00:00+00:00", "title": "Event captured", "detail": "", "data": None},
+        {"id": "model-1", "kind": "model", "status": "complete", "at": "2026-01-01T00:00:00+00:00", "title": "Model reasoned", "detail": "", "data": None},
+        {"id": "tool-1", "kind": "tool", "status": "complete", "at": "2026-01-01T00:00:00+00:00", "title": "Tool called", "detail": "", "data": None},
+        {"id": "tool-result-1", "kind": "tool_result", "status": "complete", "at": "2026-01-01T00:00:00+00:00", "title": "Tool returned", "detail": "", "data": None},
+        {"id": "handoff-1", "kind": "handoff", "status": "complete", "at": "2026-01-01T00:00:00+00:00", "title": "Agent handed off", "detail": "", "data": None},
+        {"id": "human-1", "kind": "human", "status": "complete", "at": "2026-01-01T00:00:00+00:00", "title": "Human checkpoint", "detail": "", "data": None},
+        {"id": "git-1", "kind": "git", "status": "complete", "at": "2026-01-01T00:00:00+00:00", "title": "Commit merged", "detail": "", "data": None},
+        {"id": "outcome-1", "kind": "outcome", "status": "complete", "at": "2026-01-01T00:00:00+00:00", "title": "Outcome verified", "detail": "", "data": None},
         {
             "id": "worker-killed-111", "kind": "worker", "status": "interrupted",
             "at": "2026-01-01T00:00:01+00:00", "title": "Agent Worker killed",
@@ -100,19 +108,26 @@ class RecoveryUiTests(unittest.TestCase):
         self.assertTrue(details.evaluate("element => element.open"))
         expect(details.locator("pre")).to_contain_text('"reviewed_commit": "abc123"')
 
-    def test_timeline_owner_colors_are_distinct(self):
+    def test_timeline_legend_matches_every_visible_marker(self):
         page = self.new_page()
         self.install_recovery_routes(page)
         page.goto(BASE_URL, wait_until="domcontentloaded")
 
-        def marker_color(kind):
-            return page.locator(f'#timeline li[data-kind="{kind}"]').evaluate(
+        expected_kinds = ["signalroom", "temporal", "worker", "event", "model", "tool", "tool_result", "handoff", "human", "git", "outcome"]
+        legend_items = page.locator("#timeline-legend [data-kind]")
+        expect(legend_items).to_have_count(len(expected_kinds))
+        legend_kinds = legend_items.evaluate_all(
+            "elements => elements.map(element => element.dataset.kind)"
+        )
+        self.assertEqual(legend_kinds, expected_kinds)
+        for kind in expected_kinds:
+            marker = page.locator(f'#timeline li[data-kind="{kind}"]').first.evaluate(
                 "element => getComputedStyle(element, '::before').backgroundColor"
             )
-
-        colors = {kind: marker_color(kind) for kind in ("signalroom", "temporal", "worker")}
-        self.assertEqual(len(set(colors.values())), 3, colors)
-        self.assertEqual(colors["temporal"], "rgb(178, 154, 255)")
+            legend = page.locator(f'#timeline-legend [data-kind="{kind}"]').evaluate(
+                "element => getComputedStyle(element, '::before').backgroundColor"
+            )
+            self.assertEqual(marker, legend, kind)
 
     def test_evidence_payload_cannot_squash_case_timeline(self):
         page = self.new_page()
