@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from backend.agents.harness import load_definitions, model_turn
 from backend.agents.tools import repair_lab
+from backend.api.server import recovery_context_snapshot
 from backend.orchestration.workflows import normalize_agent_result
 from backend.storage.case_store import CaseStore
 
@@ -60,6 +61,26 @@ class AgentPipelineTests(unittest.TestCase):
         record = store.get("case_test")
         self.assertEqual(record["agents"]["repair"]["active_tool"], "tests.run")
         self.assertEqual(record["timeline"][0]["data"]["command"][-1], "unittest")
+
+    def test_recovery_timeline_is_idempotent_and_exposes_checkpoint_context(self):
+        store = CaseStore(self.root / "cases.db")
+        store.create({
+            "id": "case_recovery", "title": "Recovery", "status": "awaiting_merge_approval",
+            "workflow_id": "signalroom-case-case_recovery",
+            "context": {"repo": "/tmp/repo", "event": {"type": "contract.failure"}},
+            "approval": {"state": "pending"},
+            "evidence": {"commit": {"branch": "fix", "commit": "abc123"}},
+            "agents": {"repair": {"status": "completed"}, "verification": {"status": "queued"}},
+        })
+        store.timeline("case_recovery", "temporal", "Checkpoint retained", event_id="temporal-retained-42", at="2026-01-01T00:00:00+00:00")
+        store.timeline("case_recovery", "temporal", "Checkpoint retained", event_id="temporal-retained-42", at="2026-01-01T00:00:00+00:00")
+        record = store.get("case_recovery")
+        self.assertEqual(len(record["timeline"]), 1)
+        self.assertEqual(record["timeline"][0]["at"], "2026-01-01T00:00:00+00:00")
+        snapshot = recovery_context_snapshot(record)
+        self.assertEqual(snapshot["checkpoint_status"], "awaiting_merge_approval")
+        self.assertEqual(snapshot["completed_agents"], ["repair"])
+        self.assertEqual(snapshot["reviewed_commit"], "abc123")
 
     def test_real_git_repair_reproduces_fixes_merges_and_verifies(self):
         with patch.object(repair_lab, "LAB_ROOT", self.root / "repair-lab"):

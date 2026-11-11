@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import signal
+import threading
 import time
 import uuid
 from http import HTTPStatus
@@ -35,6 +36,91 @@ def wait_for_projection(store: Store, event_id: str, statuses: set[str] | None =
             return record
         time.sleep(0.05)
     return record
+
+
+def recovery_context_snapshot(record: dict[str, Any]) -> dict[str, Any]:
+    """Operator-safe view of the state Temporal must reconstruct on replay."""
+    completed_agents = [
+        agent_id for agent_id, agent in record.get("agents", {}).items()
+        if agent.get("status") == "completed"
+    ]
+    return {
+        "case_id": record.get("id"),
+        "workflow_id": record.get("workflow_id"),
+        "checkpoint_status": record.get("status"),
+        "signalroom_context": record.get("context", {}),
+        "completed_agents": completed_agents,
+        "repair_branch": record.get("branch") or record.get("evidence", {}).get("commit", {}).get("branch"),
+        "reviewed_commit": record.get("commit") or record.get("evidence", {}).get("commit", {}).get("commit"),
+        "approval": record.get("approval", {}),
+        "evidence_available": sorted(record.get("evidence", {}).keys()),
+    }
+
+
+def record_worker_recovery(cases: CaseStore, temporal: Any, case_id: str, killed_worker_pid: int) -> None:
+    """Observe the supervisor replacement and record Temporal's recovered state."""
+    deadline = time.monotonic() + 20
+    replacement: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        worker_state = read_worker_state()
+        worker_pid = safe_worker_pid(worker_state)
+        if worker_state.get("status") == "online" and worker_pid and worker_pid != killed_worker_pid:
+            replacement = worker_state
+            break
+        time.sleep(0.15)
+
+    if not replacement:
+        cases.timeline(
+            case_id, "worker", "Replacement Worker did not become ready",
+            "The supervisor did not publish an online replacement within 20 seconds.",
+            {"killed_worker_pid": killed_worker_pid}, status="interrupted",
+            event_id=f"worker-recovery-timeout-{killed_worker_pid}",
+        )
+        return
+
+    replacement_pid = replacement.get("worker_pid")
+    cases.timeline(
+        case_id, "worker", "Replacement Worker connected",
+        f"Supervisor started Worker PID {replacement_pid}; it resumed polling the Temporal task queue.",
+        {
+            "killed_worker_pid": killed_worker_pid,
+            "replacement_worker_pid": replacement_pid,
+            "restart_count": replacement.get("restart_count"),
+            "last_exit_at": replacement.get("last_exit_at"),
+            "last_restart_at": replacement.get("last_restart_at"),
+        }, status="running", event_id=f"worker-replaced-{killed_worker_pid}",
+        at=replacement.get("last_restart_at"),
+    )
+
+    record = cases.get(case_id) or {}
+    projection_snapshot = recovery_context_snapshot(record)
+    try:
+        workflow_state = temporal.query_incident(case_id)
+        checkpoint = workflow_state.get("status", record.get("status", "unknown"))
+        replay_context = workflow_state.get("context_checkpoint") or projection_snapshot
+        cases.timeline(
+            case_id, "temporal", "Temporal replay restored Workflow context",
+            f"The replacement Worker reconstructed the Workflow from Event History and resumed at {checkpoint}; completed Activities were not rerun.",
+            {
+                "workflow_id": record.get("workflow_id"),
+                "recovered_workflow_state": workflow_state,
+                "replayed_context": replay_context,
+                "signalroom_projection": projection_snapshot,
+            }, status="recovered", event_id=f"temporal-replayed-{killed_worker_pid}",
+        )
+        cases.timeline(
+            case_id, "signalroom", "SignalRoom reattached to the recovered case",
+            f"The UI projection still points to the same case and durable checkpoint: {checkpoint}.",
+            {"case_id": case_id, "checkpoint_status": checkpoint, "replacement_worker_pid": replacement_pid},
+            status="recovered", event_id=f"signalroom-reattached-{killed_worker_pid}",
+        )
+    except Exception as error:
+        cases.timeline(
+            case_id, "temporal", "Temporal replay query pending",
+            "The Worker was replaced, but its reconstructed Workflow state could not yet be queried.",
+            {"workflow_id": record.get("workflow_id"), "error": str(error), "signalroom_projection": projection_snapshot},
+            status="interrupted", event_id=f"temporal-query-pending-{killed_worker_pid}",
+        )
 
 
 class SignalRoomHandler(SimpleHTTPRequestHandler):
@@ -155,10 +241,22 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
                 "agents": {agent_id: {"id": agent_id, "name": definition["name"], "purpose": definition["purpose"], "status": "queued", "turn": 0, "observations": [], "accent": definition.get("accent", "acid")} for agent_id, definition in definitions.items()},
             }
             self.cases.create(record)
+            self.cases.timeline(
+                case_id, "signalroom", "SignalRoom created the case projection",
+                "The incoming failure was normalized into a durable case before orchestration began.",
+                {"case_id": case_id, "event": record["event"], "workflow_id": record["workflow_id"]},
+                event_id=f"signalroom-created-{case_id}",
+            )
             created = self.temporal.start_incident({"case_id": case_id, "step_delay": float(body.get("step_delay", 0.35))})
             if not created:
                 self._json({"error": "Case Workflow already exists"}, HTTPStatus.CONFLICT)
                 return
+            self.cases.timeline(
+                case_id, "temporal", "Temporal accepted the Workflow start",
+                "SignalRoom used the Temporal client; Temporal recorded the start and scheduled work on signalroom-events.",
+                {"workflow_id": record["workflow_id"], "task_queue": "signalroom-events", "transport": "Temporal gRPC client"},
+                event_id=f"temporal-started-{case_id}",
+            )
             deadline = time.monotonic() + 4
             while time.monotonic() < deadline:
                 updated = self.cases.get(case_id)
@@ -179,7 +277,19 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
                 self._json({"error": "Case is not waiting for merge approval"}, HTTPStatus.CONFLICT)
                 return
             approved = path.endswith("/approve-merge")
-            self.temporal.decide_merge(case_id, approved, body.get("note", ""))
+            decision = {"approved": approved, "note": body.get("note", ""), "commit": case.get("evidence", {}).get("commit", {}).get("commit")}
+            self.cases.timeline(
+                case_id, "signalroom", "SignalRoom sent the human decision",
+                "The API translated the operator action into a Temporal Workflow Signal.",
+                decision, status="running", event_id=f"signalroom-decision-{case_id}",
+            )
+            self.temporal.decide_merge(case_id, approved, decision["note"])
+            self.cases.timeline(
+                case_id, "temporal", "Temporal accepted the merge-decision Signal",
+                "The Signal was appended to Workflow Event History and made the durable wait runnable.",
+                {"workflow_id": case.get("workflow_id"), "signal": "merge_decision", "decision": decision},
+                event_id=f"temporal-decision-{case_id}",
+            )
             self._json({"accepted": True, "approved": approved, "case_id": case_id}, HTTPStatus.ACCEPTED)
             return
 
@@ -219,8 +329,30 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
                 self._json({"error": "The Worker exited before the crash signal arrived."}, HTTPStatus.CONFLICT)
                 return
             case_id = body.get("case_id")
-            if case_id and self.cases.get(case_id):
-                self.cases.timeline(case_id, "worker", "Agent Worker killed", f"Worker PID {worker_pid} was terminated. Temporal retains every completed agent and tool result.", {"worker_pid": worker_pid}, status="interrupted")
+            case = self.cases.get(case_id) if case_id else None
+            if case_id and case:
+                snapshot = recovery_context_snapshot(case)
+                self.cases.timeline(
+                    case_id, "worker", "Agent Worker killed",
+                    f"Worker PID {worker_pid} was terminated. It no longer held live in-process Workflow state.",
+                    {"worker_pid": worker_pid, "checkpoint_status": case.get("status")},
+                    status="interrupted", event_id=f"worker-killed-{worker_pid}",
+                )
+                self.cases.timeline(
+                    case_id, "temporal", "Temporal retained the durable checkpoint",
+                    f"Workflow history remained authoritative at {case.get('status')}; completed agent and tool results stayed recorded.",
+                    {
+                        "workflow_id": case.get("workflow_id"),
+                        "history_owner": "Temporal Event History",
+                        "context_to_reconstruct": snapshot,
+                    }, status="durable", event_id=f"temporal-retained-{worker_pid}",
+                )
+                threading.Thread(
+                    target=record_worker_recovery,
+                    args=(self.cases, self.temporal, case_id, worker_pid),
+                    daemon=True,
+                    name=f"signalroom-recovery-{case_id}",
+                ).start()
             self._json({
                 "accepted": True,
                 "killed_worker_pid": worker_pid,

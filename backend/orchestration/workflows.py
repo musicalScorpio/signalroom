@@ -91,6 +91,12 @@ class IncidentCaseWorkflow:
         )
         definitions = prepared["definitions"]
         context = {"case_id": case_id, **prepared["lab"]}
+        self.state["context_checkpoint"] = {
+            "source_event": context.get("event"),
+            "original_failure": context.get("failure"),
+            "repository": context.get("repo"),
+            "completed_agents": [],
+        }
 
         async def run_agent(agent_id: str, agent_context: dict[str, Any]) -> dict[str, Any]:
             return await workflow.execute_child_workflow(
@@ -104,6 +110,13 @@ class IncidentCaseWorkflow:
             run_agent("investigator", context),
             run_agent("change_intelligence", context),
         )
+        self.state["context_checkpoint"].update({
+            "completed_agents": ["investigator", "change_intelligence"],
+            "investigation_observations": {
+                "investigator": len(reproduction.get("observations", [])),
+                "change_intelligence": len(changes.get("observations", [])),
+            },
+        })
         shared = {**context, "reproduction": reproduction, "change_intelligence": changes}
 
         await self._stage(case_id, "repairing", "Evidence handed to Repair Agent", "The repair context contains recorded outputs from both investigation child Workflows.")
@@ -112,6 +125,11 @@ class IncidentCaseWorkflow:
         if not commit_observation:
             raise RuntimeError("Repair Agent did not create a commit")
         commit = commit_observation["result"]
+        self.state["context_checkpoint"].update({
+            "completed_agents": ["investigator", "change_intelligence", "repair"],
+            "repair_branch": commit.get("branch"),
+            "reviewed_commit": commit.get("commit"),
+        })
 
         await self._stage(case_id, "reviewing", "Independent review started", "Review Agent receives the exact branch and commit, not the Repair Agent's private reasoning.", {"branch": commit["branch"], "commit": commit["commit"], "repair": repair})
         review = await run_agent("review", {**shared, "repair": repair, "commit": commit})
@@ -124,6 +142,12 @@ class IncidentCaseWorkflow:
             "reproduction": reproduction,
             "change_intelligence": changes,
         }
+        self.state["context_checkpoint"].update({
+            "completed_agents": ["investigator", "change_intelligence", "repair", "review"],
+            "approval_state": "pending",
+            "review_approved": evidence["review"].get("approved"),
+            "tests_exit_code": evidence["tests"].get("exit_code"),
+        })
 
         await self._stage(
             case_id, "awaiting_merge_approval", "Human merge approval required",

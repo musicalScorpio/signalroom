@@ -185,10 +185,11 @@ The runtime rail shows whether the configured model is actually present. Every a
 2. Watch the Event-to-Outcome Map and two investigation agents begin in parallel.
 3. At any non-terminal stage, click **Kill Agent Worker**.
 4. The UI shows Restarting, then a new PID and an incremented restart count.
-5. The replacement Worker replays Temporal history and resumes the unfinished Workflow task.
-6. At the Human stage, inspect the real diff, test result, branch, and commit.
-7. Click **Merge reviewed commit**.
-8. Wait for the Verification Agent and the green **Outcome reached** result.
+5. The Case Timeline records the Worker death, Temporal's retained checkpoint, the replacement Worker, the replayed context payload, and SignalRoom reattaching to the same case.
+6. The replacement Worker replays Temporal history and resumes the unfinished Workflow task. Expanded timeline payloads remain open while the live view refreshes.
+7. At the Human stage, inspect the real diff, test result, branch, and commit.
+8. Click **Merge reviewed commit**.
+9. Wait for the Verification Agent and the green **Outcome reached** result.
 
 The supervisor resurrects the process; Temporal preserves the work. Those are deliberately shown as separate responsibilities.
 

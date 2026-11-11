@@ -78,16 +78,29 @@ class CaseStore:
     def patch(self, case_id: str, changes: dict[str, Any]) -> dict[str, Any] | None:
         return self.mutate(case_id, lambda record: record.update(copy.deepcopy(changes)))
 
-    def timeline(self, case_id: str, kind: str, title: str, detail: str = "", data: Any = None, status: str = "complete") -> dict[str, Any] | None:
+    def timeline(
+        self,
+        case_id: str,
+        kind: str,
+        title: str,
+        detail: str = "",
+        data: Any = None,
+        status: str = "complete",
+        event_id: str | None = None,
+        at: str | None = None,
+    ) -> dict[str, Any] | None:
         def append(record: dict[str, Any]) -> None:
-            record.setdefault("timeline", []).append({
-                "id": f"step_{len(record.get('timeline', [])) + 1:03d}",
+            timeline = record.setdefault("timeline", [])
+            if event_id and any(item.get("id") == event_id for item in timeline):
+                return
+            timeline.append({
+                "id": event_id or f"step_{len(timeline) + 1:03d}",
                 "kind": kind,
                 "title": title,
                 "detail": detail,
                 "data": data,
                 "status": status,
-                "at": utc_now(),
+                "at": at or utc_now(),
             })
         return self.mutate(case_id, append)
 

@@ -10,6 +10,7 @@ const state = {
   activeStage: null,
   busy: false,
   toastTimer: null,
+  expandedTimeline: new Set(),
 };
 
 const stages = [
@@ -221,16 +222,19 @@ function renderEvidence() {
 }
 
 function renderTimeline() {
+  document.querySelectorAll("#timeline details[data-timeline-id][open]").forEach(details => {
+    state.expandedTimeline.add(details.dataset.timelineId);
+  });
   const timeline = state.selected?.timeline || [];
   if (!timeline.length) {
     $("#timeline").innerHTML = '<li class="empty">No transitions recorded.</li>';
     return;
   }
-  $("#timeline").innerHTML = [...timeline].reverse().map(item => `<li class="${escapeHtml(item.status || "")}">
+  $("#timeline").innerHTML = [...timeline].reverse().map(item => `<li class="${escapeHtml(item.status || "")}" data-kind="${escapeHtml(item.kind || "unknown")}">
     <time>${escapeHtml(clock(item.at))} · ${escapeHtml(item.kind)}</time>
     <strong>${escapeHtml(item.title)}</strong>
     <p>${escapeHtml(item.detail || "")}</p>
-    ${item.data != null ? `<details><summary>Inspect recorded payload</summary><pre><code>${escapeHtml(pretty(item.data))}</code></pre></details>` : ""}
+    ${item.data != null ? `<details data-timeline-id="${escapeHtml(item.id)}" ${state.expandedTimeline.has(item.id) ? "open" : ""}><summary>Inspect recorded payload</summary><pre><code>${escapeHtml(pretty(item.data))}</code></pre></details>` : ""}
   </li>`).join("");
 }
 
@@ -290,6 +294,7 @@ async function triggerCase() {
     state.selectedId = response.case.id;
     state.activeEvidence = 0;
     state.activeStage = null;
+    state.expandedTimeline.clear();
     toast("Durable case started. Two investigation agents are being scheduled.");
     await refresh();
     document.querySelector(".map-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -342,6 +347,7 @@ document.addEventListener("click", async event => {
     state.selectedId = caseButton.dataset.case;
     state.activeEvidence = 0;
     state.activeStage = null;
+    state.expandedTimeline.clear();
     await refresh();
     return;
   }
@@ -356,6 +362,13 @@ document.addEventListener("click", async event => {
     toast("Copied to clipboard.");
   }
 });
+
+$("#timeline").addEventListener("toggle", event => {
+  const details = event.target.closest?.("details[data-timeline-id]");
+  if (!details) return;
+  if (details.open) state.expandedTimeline.add(details.dataset.timelineId);
+  else state.expandedTimeline.delete(details.dataset.timelineId);
+}, true);
 
 $("#trigger-button").addEventListener("click", triggerCase);
 $("#hero-trigger").addEventListener("click", triggerCase);

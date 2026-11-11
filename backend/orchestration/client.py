@@ -80,6 +80,14 @@ class TemporalBridge:
         handle = client.get_workflow_handle(f"signalroom-case-{case_id}")
         await handle.signal(IncidentCaseWorkflow.merge_decision, {"approved": approved, "note": note})
 
+    def query_incident(self, case_id: str) -> dict[str, Any]:
+        return self._run(self._query_incident(case_id))
+
+    async def _query_incident(self, case_id: str) -> dict[str, Any]:
+        client = await self._connect()
+        handle = client.get_workflow_handle(f"signalroom-case-{case_id}")
+        return await handle.query(IncidentCaseWorkflow.current_state)
+
     def approve(self, event_id: str, approved: bool, note: str = "") -> None:
         self._run(self._approve(event_id, approved, note))
 
