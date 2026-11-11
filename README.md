@@ -176,7 +176,7 @@ Everything runs locally. No hosted model or proprietary agent platform is requir
 - Python 3.11 or newer
 - Docker Desktop or Colima
 - [uv](https://github.com/astral-sh/uv)
-- Optional but recommended: [Ollama](https://github.com/ollama/ollama)
+- [Ollama](https://github.com/ollama/ollama) with a local JSON-capable model — required for real agent reasoning
 
 ### Clone and run
 
@@ -199,7 +199,9 @@ Open:
 - SignalRoom: [http://127.0.0.1:4173](http://127.0.0.1:4173)
 - Temporal Web UI: [http://127.0.0.1:8233](http://127.0.0.1:8233)
 
-The launcher starts or reuses the Temporal development container, synchronizes Python dependencies, starts the supervised Worker, and serves the API and UI. Without Ollama, the same evidence contract runs through the visible deterministic fallback.
+The launcher starts or reuses the Temporal development container, synchronizes Python dependencies, starts the supervised Worker, and serves the API and UI.
+
+Ollama is the reasoning layer for the five agents. If Ollama is unavailable, SignalRoom enters a clearly recorded deterministic fallback so orchestration, recovery, approvals, and tool contracts can still be tested. That degraded mode does **not** perform model reasoning and is not the full agentic demonstration.
 
 For a conventional pip environment:
 
