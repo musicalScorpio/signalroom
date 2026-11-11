@@ -1,363 +1,375 @@
-const state = {
-  events: [], selected: null, mode: "shadow", runtime: "unknown",
-  runtimeInfo: null, activeStage: null, demoRunning: false, demoAvailable: false,
-};
 const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
-const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-const statusLabels = {
-  queued: "Queued", validating: "Validating", awaiting_approval: "Approval needed",
-  observing_outcome: "Awaiting outcome", completed: "Outcome recorded",
-  shadowed: "Legacy shadow run", needs_approval: "Approval needed",
-  acted: "Action dispatched", approved: "Approved", rejected: "Rejected",
+const state = {
+  cases: [],
+  selectedId: null,
+  selected: null,
+  runtime: null,
+  definitions: {},
+  activeEvidence: 0,
+  activeStage: null,
+  busy: false,
+  toastTimer: null,
 };
 
-const stageGuide = {
-  event: ["Signal accepted", "The API validates the event contract and deduplicates it by durable Workflow ID."],
-  context: ["Worker assembles context", "This is where the Temporal Worker first does meaningful agent work: Activities gather fresh source data."],
-  policy: ["Policy sets the boundary", "Deterministic rules decide whether the proposal can proceed, must wait for a human, or stays in shadow mode."],
-  action: ["Agent proposes an intervention", "A local rule or open Ollama model selects a bounded action. The recommendation is evidence, not yet an outcome."],
-  human: ["Durable human exception", "Temporal can wait here for hours or days without a Worker process consuming compute. Approval arrives as a signal."],
-  execution: ["Side effect executes once", "An idempotent Activity performs the approved action at most once, even if it is retried after a crash."],
-  outcome: ["Source system reports evidence", "The Workflow remains open until the business system reports what actually happened. It can receive this signal while the Worker is offline."],
-  feedback: ["Intervention is judged", "Operator feedback records whether the interruption was useful or noise and closes the learning loop."],
-  queued: ["Temporal schedules work", "The API started a durable Workflow. Temporal now places its first Workflow Task on the SignalRoom task queue."],
+const stages = [
+  { id: "event", label: "Event", owner: "Source system", detail: "A synthetic checkout request exposes a real Inventory v2 contract failure." },
+  { id: "investigate", label: "Investigate", owner: "2 child Workflows", detail: "Reproduction and change-intelligence agents gather independent evidence in parallel." },
+  { id: "repair", label: "Repair", owner: "Repair Agent", detail: "A bounded agent patches an isolated Git branch, runs tests, and creates a real commit." },
+  { id: "review", label: "Review", owner: "Review Agent", detail: "An independent agent inspects the exact diff and reruns the regression suite." },
+  { id: "human", label: "Human", owner: "You + Temporal", detail: "Temporal waits durably for approval of the exact reviewed commit SHA." },
+  { id: "merge", label: "Merge", owner: "Merge Activity", detail: "An idempotent Activity verifies the approved SHA and merges it to main." },
+  { id: "verify", label: "Verify", owner: "Verification Agent", detail: "A separate agent tests main and replays the original checkout request." },
+  { id: "outcome", label: "Outcome", owner: "SignalRoom", detail: "Measured business and technical outcomes close the case with an auditable record." },
+];
+
+const statusIndex = {
+  queued: 0, preparing: 0, investigating: 1, repairing: 2, reviewing: 3,
+  awaiting_merge_approval: 4, merging: 5, verifying: 6, completed: 7,
+  rejected: 4, failed: 7,
 };
-
-const examples = {
-  "workflow.stalled": "Payment reconciliation workflow has stalled for 61 minutes",
-  "deploy.failed": "Checkout API deployment failed after the schema migration",
-  "threshold.breached": "Cold-storage temperature threshold has been breached for 9 minutes",
-  "document.uploaded": "A vendor agreement document containing regulated fields was uploaded",
-  "support.sla_risk": "Enterprise support ticket is 23 minutes from its SLA deadline",
-};
-
-async function api(path, options = {}) {
-  const response = await fetch(path, { headers: { "Content-Type": "application/json", ...(options.headers || {}) }, ...options });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "Request failed");
-  return data;
-}
-
-function showToast(message) {
-  const toast = $("#toast");
-  toast.textContent = message;
-  toast.classList.add("show");
-  clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => toast.classList.remove("show"), 3200);
-}
-
-function relativeTime(value) {
-  const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000));
-  if (minutes < 1) return "now";
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h`;
-}
 
 function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#039;", '"': "&quot;" }[character]));
+  return String(value ?? "")
+    .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 }
 
-function renderEvents() {
-  $("#event-count").textContent = String(state.events.length).padStart(2, "0");
-  $("#event-list").innerHTML = state.events.map((event) => `
-    <button class="event-row ${state.selected?.id === event.id ? "active" : ""}" data-id="${event.id}" data-status="${event.status}" role="listitem">
-      <span class="event-pip"></span>
-      <span><span class="event-title">${escapeHtml(event.summary)}</span><span class="event-source">${escapeHtml(event.source)} · ${event.id}</span></span>
-      <time class="event-time" datetime="${event.received_at}">${relativeTime(event.received_at)}</time>
-    </button>`).join("");
-  $$(".event-row").forEach((row) => row.addEventListener("click", () => selectEvent(row.dataset.id)));
+function pretty(value) {
+  return typeof value === "string" ? value : JSON.stringify(value ?? {}, null, 2);
 }
 
-function inferredActiveStage(event, trace) {
-  if (event.status === "queued") return "queued";
-  if (event.status === "validating") return trace.some((item) => item.stage === "context") ? "context" : "event";
-  if (["awaiting_approval", "needs_approval"].includes(event.status)) return "human";
-  if (event.status === "observing_outcome") return "outcome";
-  if (event.status === "completed" && !event.feedback?.rating) return "feedback";
-  return null;
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `Request failed: ${response.status}`);
+  return payload;
 }
 
-function renderPath(trace) {
-  const visibleTrace = trace.length ? trace : [{ stage: "queued", state: "waiting", note: "Temporal workflow starting" }];
-  const activeStage = state.activeStage || inferredActiveStage(state.selected, visibleTrace);
-  $("#event-path").innerHTML = visibleTrace.map((item) => `
-    <button class="path-node ${escapeHtml(item.state)} ${activeStage === item.stage ? "active" : ""}" data-stage="${escapeHtml(item.stage)}" aria-label="Inspect ${escapeHtml(item.stage)} stage">
-      <span class="path-dot"></span><span class="path-stage">${escapeHtml(item.stage)}</span><span class="path-note">${escapeHtml(item.note)}</span>
-    </button>`).join("");
-  $$(".path-node").forEach((node) => node.addEventListener("click", () => {
-    state.activeStage = node.dataset.stage;
-    renderPath(trace);
-    renderStageInspector(visibleTrace.find((item) => item.stage === state.activeStage));
-  }));
-  renderStageInspector(visibleTrace.find((item) => item.stage === activeStage) || visibleTrace[0]);
+function toast(message, error = false) {
+  const element = $("#toast");
+  element.textContent = message;
+  element.className = `toast show${error ? " error" : ""}`;
+  clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => { element.className = "toast"; }, 4200);
 }
 
-function renderStageInspector(item) {
-  if (!item) return;
-  const guide = stageGuide[item.stage] || [item.stage, "This stage is recorded in the durable event history."];
-  $("#path-inspector").innerHTML = `
-    <span class="inspector-index">${escapeHtml(item.stage)}</span>
-    <div><strong>${escapeHtml(guide[0])}</strong><p>${escapeHtml(guide[1])}<br>Record: ${escapeHtml(item.note || "No note")}</p></div>
-    <span class="inspector-state">${escapeHtml(item.state)}</span>`;
+function short(value, length = 10) {
+  if (!value) return "—";
+  const text = String(value);
+  return text.length > length ? text.slice(0, length) : text;
 }
 
-function renderSelected() {
-  const event = state.selected;
-  if (!event) return;
-  const decision = event.decision || {};
-  const validation = event.validation || { valid: true };
-  const recommendationAvailable = Boolean(decision.label);
-  $("#decision-empty").hidden = true;
-  $("#decision-content").hidden = false;
-  $("#decision-status").textContent = statusLabels[event.status] || event.status;
-  $("#decision-status").dataset.status = event.status;
-  $("#decision-type").textContent = `${event.type} · ${event.id}`;
-  $("#decision-label").textContent = recommendationAvailable ? decision.label : validation.valid === false ? "Signal rejected before agent execution" : "Durable workflow is assembling the case";
-  $("#decision-rationale").textContent = recommendationAvailable ? decision.rationale : validation.issue || "The Worker is validating the event and gathering context.";
-  $("#decision-confidence").textContent = recommendationAvailable ? `${Math.round(decision.confidence * 100)}%` : "—";
-  $("#decision-risk").textContent = decision.risk || "—";
-  $("#decision-owner").textContent = decision.owner || "—";
-  $("#decision-model").textContent = `${event.model_mode || "pending"} · ${decision.execution_engine || "local"}`;
-  $("#context-chips").innerHTML = (event.context?.snapshot || []).map((item) => `<span>${escapeHtml(item)}</span>`).join("") || "<span>Context pending</span>";
-  $("#selected-meta").textContent = `${event.summary} · ${event.source}`;
-
-  const approval = $("#approval-box");
-  const needsApproval = ["awaiting_approval", "needs_approval"].includes(event.status);
-  approval.dataset.hidden = needsApproval ? "false" : "true";
-  const actionResult = event.outcome?.action_result;
-  $("#approval-copy").textContent = needsApproval
-    ? "Temporal is durably paused. The Worker is free to do other work until a decision arrives."
-    : actionResult?.state === "withheld_shadow" ? "Shadow mode withheld the side effect; the Workflow is still observing the business result."
-      : actionResult?.state === "dispatched" ? `Action dispatched once as ${actionResult.reference}.`
-        : validation.valid === false ? validation.issue : "No human exception is currently pending.";
-
-  renderOutcome(event);
-  $$(".feedback-row button").forEach((button) => button.classList.toggle("active", event.feedback?.rating === button.dataset.rating));
-  renderPath(decision.trace || []);
+function clock(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function renderOutcome(event) {
-  const outcome = event.outcome || {};
-  const contract = outcome.contract;
-  const result = outcome.business_result;
-  const resultBox = $("#outcome-result");
-  const reportBox = $("#outcome-report");
-  if (!contract) {
-    $("#outcome-question").textContent = result?.note || "This signal was rejected before an outcome contract was created.";
-    $("#outcome-state").textContent = result?.label || "Not applicable";
-    reportBox.hidden = true;
-    resultBox.hidden = true;
-    return;
-  }
-  $("#outcome-question").textContent = contract.question;
-  $("#outcome-metric-label").textContent = contract.metric_label;
-  if (result) {
-    $("#outcome-state").textContent = result.success ? "Successful" : "Unsuccessful";
-    const metricValue = result.metrics?.[contract.metric];
-    resultBox.innerHTML = `<strong>${escapeHtml(result.label)}</strong><br>${escapeHtml(result.note || "Outcome evidence recorded.")}${metricValue !== undefined ? `<br>${escapeHtml(contract.metric_label)}: ${escapeHtml(metricValue)}` : ""}`;
-    resultBox.className = `outcome-result ${result.success ? "success" : "failure"}`;
-    resultBox.hidden = false;
-    reportBox.hidden = true;
-  } else {
-    $("#outcome-state").textContent = event.status === "observing_outcome" ? "Awaiting evidence" : "Not ready";
-    resultBox.hidden = true;
-    reportBox.hidden = event.status !== "observing_outcome";
-    $("#outcome-choices").innerHTML = contract.choices.map((choice) => `<button data-code="${choice.code}">${escapeHtml(choice.label)}</button>`).join("");
-    $$("#outcome-choices button").forEach((button) => button.addEventListener("click", () => reportOutcome(button.dataset.code, contract.metric)));
-  }
-}
-
-function renderRuntime(runtime) {
-  state.runtimeInfo = runtime;
+function renderRuntime() {
+  const runtime = state.runtime || {};
   const worker = runtime.worker || {};
-  $("#temporal-status").textContent = runtime.temporal_connected ? "Connected" : "Offline";
-  $("#worker-status").textContent = worker.status || "unknown";
-  $("#worker-status").dataset.status = worker.status || "unknown";
-  $("#worker-detail").textContent = worker.worker_pid ? `PID ${worker.worker_pid} · runs workflow tasks` : "No Worker process; Temporal keeps state";
-  const count = worker.restart_count || 0;
-  $("#restart-count").textContent = `${count} restart${count === 1 ? "" : "s"}`;
-  $("#runtime-indicator").textContent = runtime.temporal_connected ? `Temporal connected · Worker ${worker.status || "unknown"}` : "Local fallback runtime";
-  state.demoAvailable = Boolean(runtime.temporal_connected && runtime.chaos_demo_enabled && worker.status === "online");
-  const demoButton = $("#durability-demo-button");
-  demoButton.disabled = state.demoRunning;
-  demoButton.classList.toggle("demo-unavailable", !state.demoAvailable);
-  demoButton.innerHTML = state.demoAvailable
-    ? '<span class="demo-button-dot"></span>Run crash + resume demo'
-    : '<span class="demo-button-dot"></span>Why is the demo unavailable?';
+  const ollama = runtime.ollama || {};
+  const temporalOnline = Boolean(runtime.temporal_connected);
+  const workerOnline = worker.status === "online";
+  const workerRestarting = worker.status === "restarting" || worker.status === "starting";
+
+  $("#temporal-status").textContent = temporalOnline ? "Connected" : "Unavailable";
+  $("#temporal-status").className = temporalOnline ? "" : "offline";
+  $("#worker-status").textContent = workerRestarting ? "Restarting…" : workerOnline ? "Online" : (worker.status || "Offline");
+  $("#worker-status").className = workerRestarting ? "restarting" : workerOnline ? "" : "offline";
+  $("#worker-detail").textContent = worker.worker_pid ? `PID ${worker.worker_pid} · executes tasks` : workerRestarting ? "Supervisor is replacing the process" : "No Worker is polling";
+  $("#restart-count").textContent = `${worker.restart_count || 0} restart${worker.restart_count === 1 ? "" : "s"}`;
+  $("#ollama-status").textContent = ollama.model_available ? short(ollama.model, 22) : "Safe fallback";
+  $("#ollama-status").className = ollama.model_available ? "" : "offline";
+  $("#ollama-detail").textContent = ollama.model_available
+    ? "Local model · JSON commands"
+    : ollama.connected ? `${ollama.model} is not pulled` : "Ollama offline · deterministic tool policy";
+  $("#runtime-indicator").textContent = temporalOnline && workerOnline ? "Temporal + Worker online" : workerRestarting ? "Worker recovery in progress" : "Runtime needs attention";
+  $("#header-dot").className = `status-dot ${temporalOnline && workerOnline ? "online" : "offline"}`;
+
+  const terminal = ["completed", "failed", "rejected"].includes(state.selected?.status);
+  $("#kill-worker-button").disabled = !runtime.chaos_demo_enabled || !workerOnline || !state.selected || terminal || state.busy;
+  $("#kill-worker-button").classList.toggle("armed", Boolean(state.selected && workerOnline && !terminal));
 }
 
-function selectEvent(id) {
-  state.selected = state.events.find((event) => event.id === id);
-  state.activeStage = null;
-  renderEvents();
-  renderSelected();
+function renderPipeline() {
+  const current = state.selected ? (statusIndex[state.selected.status] ?? 0) : -1;
+  $("#pipeline").innerHTML = stages.map((stage, index) => {
+    let phase = "waiting";
+    if (state.selected) {
+      if (state.selected.status === "completed") phase = "complete";
+      else if (index < current) phase = "complete";
+      else if (index === current) phase = ["failed", "rejected"].includes(state.selected.status) ? "blocked" : "active";
+    }
+    const marker = phase === "complete" ? "✓" : String(index + 1).padStart(2, "0");
+    return `<button class="stage ${phase}" data-stage="${index}" aria-label="${escapeHtml(stage.label)} stage, ${phase}">
+      <span class="stage-node">${marker}</span><strong>${escapeHtml(stage.label)}</strong><small>${escapeHtml(stage.owner)}</small>
+    </button>`;
+  }).join("");
+  const selectedStage = state.activeStage == null ? (current >= 0 ? current : null) : state.activeStage;
+  inspectStage(selectedStage, false);
 }
 
-async function load() {
-  const [{ events, mode, runtime }, metrics, runtimeInfo] = await Promise.all([api("/api/events"), api("/api/metrics"), api("/api/runtime")]);
-  state.events = events;
-  state.mode = mode;
-  state.runtime = runtime;
-  $("#run-mode").value = mode;
-  if (!state.selected || !events.some((event) => event.id === state.selected.id)) state.selected = events[0];
-  else state.selected = events.find((event) => event.id === state.selected.id);
-  renderRuntime(runtimeInfo);
-  renderEvents();
-  renderSelected();
-  renderMetrics(metrics);
-}
-
-function renderMetrics(metrics) {
-  $("#metric-completed").textContent = metrics.completed;
-  $("#metric-successful").textContent = metrics.successful;
-  $("#metric-pending").textContent = metrics.pending;
-  $("#metric-failed").textContent = metrics.failed;
-  $("#outcome-score").textContent = metrics.completed ? `${Math.round(metrics.successful / metrics.completed * 100)}%` : "—";
-}
-
-function setDemoSteps(steps, activeIndex = -1, failedIndex = -1) {
-  $("#demo-steps").innerHTML = steps.map((step, index) => `<li class="${index < activeIndex ? "done" : index === activeIndex ? "active" : index === failedIndex ? "failed" : ""}">${escapeHtml(step)}</li>`).join("");
-}
-
-async function runDurabilityDemo() {
-  if (state.demoRunning) return;
-  if (!state.demoAvailable) {
-    const consoleBox = $("#demo-console");
-    consoleBox.hidden = false;
-    $("#demo-console-status").textContent = "Temporal runtime unavailable";
-    const requirements = [
-      "Stop the fallback server currently using port 4173",
-      "Run ./scripts/dev.sh from the SignalRoom directory",
-      "Wait for Temporal connected and Agent Worker online",
-      "Click Run crash + resume demo again",
-    ];
-    setDemoSteps(requirements, -1, 0);
-    showToast("Crash recovery requires Temporal and the supervised Worker. Start SignalRoom with ./scripts/dev.sh.");
+function inspectStage(index, persist = true) {
+  if (index == null || !stages[index]) {
+    $("#stage-inspector").innerHTML = "<span>Stage</span><div><strong>Select a point in the map</strong><p>Its owner, evidence, and durable boundary will appear here.</p></div><b>Waiting</b>";
     return;
   }
-  state.demoRunning = true;
-  const consoleBox = $("#demo-console");
-  consoleBox.hidden = false;
-  const steps = [
-    "Start a durable Workflow and wait at the Outcome stage",
-    "Kill the current Agent Worker process",
-    "Send business outcome while no Worker is running",
-    "Supervisor starts a replacement Worker",
-    "Replacement Worker replays history and completes the same Workflow",
-  ];
-  setDemoSteps(steps, 0);
-  $("#demo-console-status").textContent = "Temporal creating workflow";
-  renderRuntime(state.runtimeInfo);
-  let activeIndex = 0;
+  if (persist) state.activeStage = index;
+  const stage = stages[index];
+  const current = state.selected ? (statusIndex[state.selected.status] ?? 0) : -1;
+  const label = !state.selected ? "Waiting" : index < current || state.selected.status === "completed" ? "Recorded" : index === current ? state.selected.status.replaceAll("_", " ") : "Pending";
+  $("#stage-inspector").innerHTML = `<span>${String(index + 1).padStart(2, "0")}</span>
+    <div><strong>${escapeHtml(stage.label)} · ${escapeHtml(stage.owner)}</strong><p>${escapeHtml(stage.detail)}</p></div><b>${escapeHtml(label)}</b>`;
+}
+
+function renderCases() {
+  $("#case-count").textContent = state.cases.length;
+  if (!state.cases.length) {
+    $("#case-list").innerHTML = '<p class="empty">No cases yet. Run the pipeline above.</p>';
+    return;
+  }
+  $("#case-list").innerHTML = state.cases.map(item => `<button class="case-item ${item.id === state.selectedId ? "selected" : ""}" data-case="${escapeHtml(item.id)}">
+    <span><b>${escapeHtml(item.id)}</b><time>${escapeHtml(clock(item.updated_at))}</time></span>
+    <strong>${escapeHtml(item.title)}</strong>
+    <i class="status-chip ${escapeHtml(item.status)}">${escapeHtml(item.status.replaceAll("_", " "))}</i>
+  </button>`).join("");
+}
+
+function renderCase() {
+  const item = state.selected;
+  if (!item) {
+    $("#case-meta").textContent = "Trigger a case to see each durable transition.";
+    $("#case-content").className = "case-content empty-state";
+    $("#case-content").innerHTML = '<span class="empty-icon">↯</span><h2>No active case</h2><p>Trigger the synthetic contract failure. The repository, branch, commits, tests, and merge are real and isolated locally.</p>';
+    return;
+  }
+  $("#case-meta").textContent = `${item.id} · ${item.event?.source || "local source"} · updated ${clock(item.updated_at)}`;
+  const outcome = item.outcome;
+  const commit = item.commit?.commit || item.evidence?.commit?.commit;
+  $("#case-content").className = "case-content";
+  $("#case-content").innerHTML = `
+    <div class="case-kicker"><span class="status-chip ${escapeHtml(item.status)}">${escapeHtml(item.status.replaceAll("_", " "))}</span><span class="eyebrow">${escapeHtml(item.workflow_id || "")}</span></div>
+    <h2>${escapeHtml(item.title)}</h2>
+    <p class="case-summary">${escapeHtml(item.event?.summary || "")}</p>
+    <div class="case-facts">
+      <div class="fact"><span>Repository</span><strong>${escapeHtml(item.lab?.repo || "Preparing…")}</strong></div>
+      <div class="fact"><span>Repair branch</span><strong>${escapeHtml(item.branch || item.evidence?.commit?.branch || "Not created")}</strong></div>
+      <div class="fact"><span>Reviewed commit</span><strong title="${escapeHtml(commit || "")}">${escapeHtml(short(commit, 12))}</strong></div>
+      <div class="fact"><span>Temporal state</span><strong>${escapeHtml(item.status.replaceAll("_", " "))}</strong></div>
+    </div>
+    ${outcome ? `<div class="outcome-card"><div><strong>${outcome.success ? "Outcome reached" : "Outcome failed"}</strong><p>${outcome.success ? "Checkout accepts Inventory v2 and the regression suite passes on main." : "Verification did not satisfy the outcome contract."}</p></div><span class="status-chip ${outcome.success ? "completed" : "failed"}">${outcome.success ? "verified" : "failed"}</span></div>` : ""}
+  `;
+}
+
+function renderAgents() {
+  const agentRecords = state.selected?.agents || {};
+  const definitions = state.definitions || {};
+  const entries = Object.entries(definitions);
+  if (!entries.length) {
+    $("#agent-grid").innerHTML = '<p class="empty">Loading agent definitions…</p>';
+    return;
+  }
+  $("#agent-grid").innerHTML = entries.map(([id, definition]) => {
+    const record = agentRecords[id] || { status: "queued", turn: 0, observations: [] };
+    const used = new Set((record.observations || []).map(item => item.tool));
+    const current = record.active_tool
+      ? `Calling ${record.active_tool}`
+      : record.last_summary || (record.status === "completed" ? record.result?.summary : "Waiting for its durable assignment.");
+    return `<article class="agent-card" data-status="${escapeHtml(record.status || "queued")}" data-accent="${escapeHtml(definition.accent || "acid")}">
+      <div class="agent-top"><span class="agent-status"><i></i>${escapeHtml((record.status || "queued").replaceAll("_", " "))}</span><span class="agent-turn">turn ${record.turn || 0}/${definition.max_turns}</span></div>
+      <h3>${escapeHtml(definition.name)}</h3>
+      <p class="agent-purpose">${escapeHtml(definition.purpose)}</p>
+      <div class="agent-current">${escapeHtml(current || "Assignment complete.")}</div>
+      <div class="agent-meta"><span>${escapeHtml(record.model_mode || "not started")}</span><span>${(record.observations || []).length} results</span></div>
+      <div class="agent-tools">${definition.tools.map(tool => `<span class="tool-pill ${used.has(tool) ? "used" : ""}">${escapeHtml(tool)}</span>`).join("")}</div>
+    </article>`;
+  }).join("");
+}
+
+function evidenceItems() {
+  if (!state.selected) return [];
+  const definitions = state.definitions;
+  const items = [];
+  Object.entries(state.selected.agents || {}).forEach(([agentId, agent]) => {
+    (agent.observations || []).forEach(observation => items.push({
+      title: observation.tool,
+      source: definitions[agentId]?.name || agentId,
+      value: observation.result,
+    }));
+  });
+  if (state.selected.merge) items.push({ title: "git.merge", source: "Merge Activity", value: state.selected.merge });
+  if (state.selected.outcome) items.push({ title: "verified.outcome", source: "Outcome Verification", value: state.selected.outcome });
+  return items;
+}
+
+function renderEvidence() {
+  const items = evidenceItems();
+  if (!items.length) {
+    $("#evidence-tabs").innerHTML = "";
+    $("#evidence-viewer").innerHTML = '<p class="empty">Agent tool results will appear here as the Workflow progresses.</p>';
+    return;
+  }
+  state.activeEvidence = Math.min(state.activeEvidence, items.length - 1);
+  $("#evidence-tabs").innerHTML = items.map((item, index) => `<button class="evidence-tab ${index === state.activeEvidence ? "active" : ""}" data-evidence="${index}">${escapeHtml(item.title)}</button>`).join("");
+  const item = items[state.activeEvidence];
+  $("#evidence-viewer").innerHTML = `<h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.source)} · recorded tool evidence</p><pre><code>${escapeHtml(pretty(item.value))}</code></pre>`;
+}
+
+function renderTimeline() {
+  const timeline = state.selected?.timeline || [];
+  if (!timeline.length) {
+    $("#timeline").innerHTML = '<li class="empty">No transitions recorded.</li>';
+    return;
+  }
+  $("#timeline").innerHTML = [...timeline].reverse().map(item => `<li class="${escapeHtml(item.status || "")}">
+    <time>${escapeHtml(clock(item.at))} · ${escapeHtml(item.kind)}</time>
+    <strong>${escapeHtml(item.title)}</strong>
+    <p>${escapeHtml(item.detail || "")}</p>
+    ${item.data != null ? `<details><summary>Inspect recorded payload</summary><pre><code>${escapeHtml(pretty(item.data))}</code></pre></details>` : ""}
+  </li>`).join("");
+}
+
+function renderApproval() {
+  const item = state.selected;
+  const visible = item?.status === "awaiting_merge_approval";
+  $("#approval-panel").hidden = !visible;
+  if (!visible) return;
+  const evidence = item.evidence || {};
+  const commit = evidence.commit || {};
+  const review = evidence.review || {};
+  const tests = evidence.tests || {};
+  $("#approval-facts").innerHTML = `
+    <div><dt>Branch</dt><dd>${escapeHtml(commit.branch || "—")}</dd></div>
+    <div><dt>Commit</dt><dd>${escapeHtml(commit.commit || "—")}</dd></div>
+    <div><dt>Tests</dt><dd>${tests.exit_code === 0 ? "Passing · exit 0" : `Exit ${escapeHtml(tests.exit_code)}`}</dd></div>
+    <div><dt>Review</dt><dd>${review.approved ? "Approved · no blocking concerns" : "Not approved"}</dd></div>`;
+  $("#diff-code").textContent = review.diff || "No diff evidence recorded.";
+}
+
+function renderAll() {
+  renderRuntime();
+  renderCases();
+  renderCase();
+  renderPipeline();
+  renderAgents();
+  renderEvidence();
+  renderTimeline();
+  renderApproval();
+}
+
+async function refresh() {
   try {
-    const baselineRestarts = state.runtimeInfo?.worker?.restart_count || 0;
-    const created = await api("/api/demo/durability", { method: "POST", body: "{}" });
-    state.selected = created.event;
-    state.activeStage = "outcome";
-    await load();
-    activeIndex = 1;
-    setDemoSteps(steps, activeIndex);
-    $("#demo-console-status").textContent = "Crashing Worker";
-
-    await api("/api/demo/worker/crash", { method: "POST", body: "{}" });
-    await sleep(350);
-    const offlineRuntime = await api("/api/runtime");
-    renderRuntime(offlineRuntime);
-    activeIndex = 2;
-    setDemoSteps(steps, activeIndex);
-    $("#demo-console-status").textContent = "Worker offline · signal accepted by Temporal";
-
-    await api(`/api/events/${created.event.id}/outcome`, {
-      method: "POST",
-      body: JSON.stringify({ code: "workflow_resumed", note: "Outcome signal was accepted while the Agent Worker was offline.", metrics: { recovery_time_minutes: 0 } }),
-    });
-
-    activeIndex = 3;
-    setDemoSteps(steps, activeIndex);
-    $("#demo-console-status").textContent = "Waiting for replacement Worker";
-    const deadline = Date.now() + 16000;
-    let replacementSeen = false;
-    let completed = false;
-    while (Date.now() < deadline) {
-      await sleep(500);
-      await load();
-      replacementSeen = state.runtimeInfo?.worker?.status === "online" && (state.runtimeInfo?.worker?.restart_count || 0) > baselineRestarts;
-      completed = state.selected?.id === created.event.id && state.selected?.status === "completed";
-      if (replacementSeen && activeIndex === 3) {
-        activeIndex = 4;
-        setDemoSteps(steps, activeIndex);
-        $("#demo-console-status").textContent = "Worker replaying history";
-      }
-      if (replacementSeen && completed) break;
-    }
-    if (!replacementSeen || !completed) throw new Error("The replacement Worker did not complete the proof before the demo timeout.");
-    state.activeStage = "outcome";
-    renderSelected();
-    setDemoSteps(steps, 5);
-    $("#demo-console-status").textContent = "Proof complete";
-    showToast("Durability proven: a replacement Worker completed the same Workflow.");
+    const [caseResponse, runtime, definitionResponse] = await Promise.all([
+      api("/api/cases"), api("/api/runtime"), api("/api/agent-definitions"),
+    ]);
+    state.cases = caseResponse.cases || [];
+    state.runtime = runtime;
+    state.definitions = definitionResponse.agents || {};
+    if (!state.selectedId && state.cases.length) state.selectedId = state.cases[0].id;
+    const summary = state.cases.find(item => item.id === state.selectedId);
+    if (summary) state.selected = await api(`/api/cases/${encodeURIComponent(summary.id)}`);
+    else state.selected = null;
+    renderAll();
   } catch (error) {
-    setDemoSteps(steps, -1, activeIndex);
-    $("#demo-console-status").textContent = "Demo stopped";
-    showToast(error.message);
-  } finally {
-    state.demoRunning = false;
-    const latestRuntime = await api("/api/runtime").catch(() => state.runtimeInfo);
-    if (latestRuntime) renderRuntime(latestRuntime);
+    $("#runtime-indicator").textContent = "SignalRoom API unavailable";
+    $("#header-dot").className = "status-dot offline";
   }
 }
 
-async function decide(action) {
-  if (!state.selected) return;
-  await api(`/api/events/${state.selected.id}/${action}`, { method: "POST", body: "{}" });
-  showToast(action === "approve" ? "Approval signal delivered to the Workflow." : "Rejection signal delivered to the Workflow.");
-  await load();
+async function triggerCase() {
+  if (state.busy) return;
+  state.busy = true;
+  document.querySelectorAll("#trigger-button,#hero-trigger").forEach(button => { button.disabled = true; button.textContent = "Starting durable case…"; });
+  try {
+    const response = await api("/api/lab/run", { method: "POST", body: JSON.stringify({ step_delay: 0.42 }) });
+    state.selectedId = response.case.id;
+    state.activeEvidence = 0;
+    state.activeStage = null;
+    toast("Durable case started. Two investigation agents are being scheduled.");
+    await refresh();
+    document.querySelector(".map-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.busy = false;
+    document.querySelectorAll("#trigger-button,#hero-trigger").forEach((button, index) => { button.disabled = false; button.innerHTML = index === 0 ? 'Trigger incident <span>↗</span>' : 'Run the repair pipeline <span>↗</span>'; });
+  }
 }
 
-async function reportOutcome(code, metric) {
-  if (!state.selected) return;
-  const metricValue = Number($("#outcome-metric").value);
-  await api(`/api/events/${state.selected.id}/outcome`, { method: "POST", body: JSON.stringify({ code, note: $("#outcome-note").value, metrics: { [metric]: metricValue } }) });
-  showToast("Business outcome delivered; the durable Workflow completed.");
-  await load();
+async function killWorker() {
+  if (!state.selected || state.busy) return;
+  state.busy = true;
+  renderRuntime();
+  try {
+    const response = await api("/api/demo/worker/crash", { method: "POST", body: JSON.stringify({ case_id: state.selected.id }) });
+    toast(`Worker ${response.killed_worker_pid} killed. Watch the supervisor and Temporal recovery.`);
+    await refresh();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.busy = false;
+  }
 }
 
-async function rate(rating) {
-  if (!state.selected) return;
-  await api(`/api/events/${state.selected.id}/feedback`, { method: "POST", body: JSON.stringify({ rating }) });
-  showToast(rating === "useful" ? "Marked as a useful intervention." : "Marked as a false interruption.");
-  await load();
+async function mergeDecision(approved) {
+  if (!state.selected || state.busy) return;
+  state.busy = true;
+  $("#approve-button").disabled = true;
+  $("#reject-button").disabled = true;
+  try {
+    await api(`/api/cases/${encodeURIComponent(state.selected.id)}/${approved ? "approve-merge" : "reject-merge"}`, {
+      method: "POST", body: JSON.stringify({ note: approved ? "Operator reviewed diff, tests, and exact commit." : "Operator rejected the proposed repair." }),
+    });
+    toast(approved ? "Approval signal accepted. Temporal is resuming the Workflow." : "Rejection recorded. Temporal is closing the case.");
+    await refresh();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    state.busy = false;
+    $("#approve-button").disabled = false;
+    $("#reject-button").disabled = false;
+  }
 }
 
-$("#durability-demo-button").addEventListener("click", runDurabilityDemo);
-$("#new-event-button").addEventListener("click", () => $("#event-dialog").showModal());
-$("#close-dialog").addEventListener("click", () => $("#event-dialog").close());
-$("#cancel-dialog").addEventListener("click", () => $("#event-dialog").close());
-$("#approve-button").addEventListener("click", () => decide("approve"));
-$("#reject-button").addEventListener("click", () => decide("reject"));
-$$(".feedback-row button").forEach((button) => button.addEventListener("click", () => rate(button.dataset.rating)));
-$("#run-mode").addEventListener("change", async (event) => {
-  await api("/api/config", { method: "POST", body: JSON.stringify({ run_mode: event.target.value }) });
-  showToast(`New Workflows will run in ${event.target.value} mode.`);
-  await load();
-});
-$("#event-form select[name='type']").addEventListener("change", (event) => {
-  $("#event-form textarea[name='summary']").value = examples[event.target.value];
-});
-$("#event-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const result = await api("/api/events", { method: "POST", body: JSON.stringify({ type: form.get("type"), source: form.get("source"), summary: form.get("summary"), payload: { injected: true } }) });
-  $("#event-dialog").close();
-  state.selected = result.event;
-  state.activeStage = null;
-  showToast(result.duplicate ? "Duplicate Workflow already exists." : `Event started on the ${result.runtime} runtime.`);
-  await load();
+document.addEventListener("click", async event => {
+  const caseButton = event.target.closest("[data-case]");
+  if (caseButton) {
+    state.selectedId = caseButton.dataset.case;
+    state.activeEvidence = 0;
+    state.activeStage = null;
+    await refresh();
+    return;
+  }
+  const stageButton = event.target.closest("[data-stage]");
+  if (stageButton) { inspectStage(Number(stageButton.dataset.stage), true); return; }
+  const evidenceButton = event.target.closest("[data-evidence]");
+  if (evidenceButton) { state.activeEvidence = Number(evidenceButton.dataset.evidence); renderEvidence(); return; }
+  const copyButton = event.target.closest("[data-copy]");
+  if (copyButton) {
+    const source = document.getElementById(copyButton.dataset.copy);
+    await navigator.clipboard.writeText(source?.textContent || "");
+    toast("Copied to clipboard.");
+  }
 });
 
-load().catch((error) => showToast(error.message));
-setInterval(() => {
-  if (!state.demoRunning && !document.hidden) load().catch(() => {});
-}, 3000);
+$("#trigger-button").addEventListener("click", triggerCase);
+$("#hero-trigger").addEventListener("click", triggerCase);
+$("#kill-worker-button").addEventListener("click", killWorker);
+$("#approve-button").addEventListener("click", () => mergeDecision(true));
+$("#reject-button").addEventListener("click", () => mergeDecision(false));
+$("#definitions-button").addEventListener("click", () => {
+  $("#definitions-code").textContent = JSON.stringify(state.definitions, null, 2);
+  $("#definitions-dialog").showModal();
+});
+$("#close-definitions").addEventListener("click", () => $("#definitions-dialog").close());
+$("#definitions-dialog").addEventListener("click", event => {
+  if (event.target === $("#definitions-dialog")) $("#definitions-dialog").close();
+});
+
+refresh();
+setInterval(refresh, 900);

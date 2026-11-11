@@ -2,214 +2,207 @@
 
 **Ambient agents, durable execution, accountable outcomes.**
 
-SignalRoom is an open-source control room for agents that begin with an event instead of a chat prompt. Each event becomes a durable Temporal Workflow:
+SignalRoom is a fully local, open-source proof of concept for agents that begin with an event instead of a chat. It demonstrates a complete software-repair case—not a scripted animation:
 
-```text
-event → validation → context → policy → proposed action → human exception
-      → execution result → business outcome → feedback
-```
+~~~text
+runtime failure → parallel investigation → repair branch → independent review
+                → human merge approval → merge → outcome verification
+~~~
 
-The important distinction is that an agent recommendation is not an outcome. SignalRoom records three separate facts:
+The lab creates a real local Git repository where an Inventory v2 contract breaks checkout. Five bounded agents use recorded context and allowlisted tools to reproduce the failure, inspect the change, patch the code, run tests, commit a branch, review the exact diff, and verify the merged result. Temporal owns orchestration and recovery. SignalRoom’s SQLite database is a readable UI projection, not the Workflow recovery mechanism.
 
-1. **Decision:** what the agent recommended and why.
-2. **Execution:** whether an idempotent side effect actually occurred.
-3. **Business outcome:** what changed afterward, according to the source system.
+## The outcome
 
-## What is durable
+A successful case ends only when all of these facts exist:
 
-Temporal owns workflow execution state. If a Worker stops during context gathering, approval or outcome observation, another Worker reconstructs the case from Event History and resumes at the unfinished step. Completed model calls and Activities are not repeated during replay.
+- The original checkout failure was reproduced.
+- Inventory v2 and the stale Order Service assumption were independently identified.
+- A backward-compatible adapter was committed on an isolated branch.
+- The full test suite passed.
+- A separate Review Agent approved the exact diff.
+- A human approved the exact commit SHA.
+- The approved SHA was merged to main.
+- A Verification Agent replayed checkout on main and measured success.
 
-SQLite is the UI projection and analytics store. The downstream system remains the source of truth for real-world effects. This separation prevents a model response from being mistaken for a completed business result.
+“Agent finished” is not the outcome. The verified checkout response and passing tests are the outcome.
 
-The implementation includes:
+## Architecture
 
-- Temporal Workflow per event, with Workflow-ID deduplication
-- Durable human approval and outcome waits
-- Idempotent action Activities with stable effect references
-- Explicit outcome contracts for every supported signal
-- Signal type/description conflict detection
-- Shadow, guarded and autonomous modes
-- Optional local Qwen3-4B inference through Ollama
-- Local fallback mode when Temporal is unavailable
-- Replayable UI trace and outcome scorecard
+The diagram source lives in [docs/signalroom-architecture.mmd](docs/signalroom-architecture.mmd).
+
+~~~mermaid
+flowchart LR
+    browser["SignalRoom UI"] -->|"POST /api/lab/run"| api["Local HTTP API"]
+    api -->|"Start Workflow / send Signal"| client["Temporal gRPC client"]
+    client --> temporal["Temporal service<br/>Event History + task queues"]
+
+    supervisor["Worker supervisor"] -->|"spawn / respawn"| worker["Temporal Worker"]
+    temporal -->|"Workflow + Activity tasks"| worker
+    worker --> parent["IncidentCaseWorkflow"]
+    parent -->|"parallel child Workflows"| agents["Investigator + Change Intelligence"]
+    parent --> repair["Repair Agent"]
+    parent --> review["Review Agent"]
+    parent -->|"durable wait"| human["Human merge approval"]
+    parent --> verify["Verification Agent"]
+
+    agents --> activities["Typed Activities + allowlisted tools"]
+    repair --> activities
+    review --> activities
+    verify --> activities
+    activities --> harness["Structured agent harness"]
+    harness -->|"local JSON turns"| ollama["Ollama model"]
+    activities --> lab["Isolated Git repair lab<br/>code + tests + branch + commit"]
+    activities --> sqlite["SQLite UI projection<br/>cases + evidence + timeline"]
+    sqlite --> api
+    human -->|"approve exact SHA"| api
+~~~
+
+### State ownership
+
+| State | Owner | Purpose |
+| --- | --- | --- |
+| Workflow position, completed Activity results, pending approval signal | Temporal Event History | Reconstruct execution after a Worker dies |
+| Case status, timeline, agent cards, evidence shown in the UI | SQLite agent_cases projection | Fast operator reads and local querying |
+| Code, branch, commits, test output | Per-case repository under .signalroom/repair-lab/ | Real repair artifact and source of Git truth |
+| Prompts, tools, evidence requirements, turn limits | config/agents.json | Versionable agent definitions |
+| Worker process lifecycle and restart count | worker_supervisor.py state file | Local crash/recovery demonstration |
+
+Deleting SQLite would remove the UI projection, but it is not what lets Temporal resume a Workflow. Deleting the Temporal container destroys this development server’s Workflow history.
+
+## Agent definitions
+
+Agents are configured data, not hard-coded personas. Each definition has a purpose, system prompt, tool allowlist, required tools, and a maximum number of turns:
+
+~~~json
+{
+  "repair": {
+    "name": "Repair Agent",
+    "purpose": "Create a minimal backward-compatible patch on an isolated branch.",
+    "system_prompt": "Produce the smallest backward-compatible change, add regression coverage, run tests, and commit only inside the assigned worktree.",
+    "tools": ["code.patch", "tests.run", "git.commit"],
+    "required_tools": ["code.patch", "tests.run", "git.commit"],
+    "max_turns": 6
+  }
+}
+~~~
+
+The model never receives an unrestricted shell. It selects from the definition’s tools; the harness validates every command before an Activity executes it. If Ollama is offline, the same evidence contract is completed by a deterministic safe policy and the fallback is recorded visibly.
 
 ## Quick start
 
 Requirements:
 
-- Docker-compatible runtime
+- Docker or Colima
 - [uv](https://github.com/astral-sh/uv)
+- Optional: [Ollama](https://github.com/ollama/ollama) with a local open model
 
-```bash
+~~~bash
+cd /Users/musicalscorpio/Documents/Codex/2026-11-09/this-time-i-an-tryign-to-2/outputs/signalroom
 chmod +x scripts/dev.sh
 ./scripts/dev.sh
-```
+~~~
 
 Open:
 
 - SignalRoom: [http://127.0.0.1:4173](http://127.0.0.1:4173)
-- Temporal Web UI: [http://127.0.0.1:8233](http://127.0.0.1:8233)
+- Temporal UI: [http://127.0.0.1:8233](http://127.0.0.1:8233)
 
-The script starts the local Temporal development service, installs the locked Python environment, starts a Temporal Worker and runs the SignalRoom server. Stop SignalRoom with `Ctrl-C`. The Temporal container remains available for the next run.
+The launcher starts or reuses the local Temporal container, syncs dependencies, starts the supervised Worker, and starts the API/UI server. It safely replaces an older SignalRoom process on port 4173 but refuses to kill an unrelated application.
 
-If an older SignalRoom server is still using port 4173, the launcher identifies and replaces that stale SignalRoom process automatically. It will never terminate an unrelated application on the port; in that case it prints the conflicting PID and suggests `SIGNALROOM_PORT=4174 ./scripts/dev.sh`.
+### Use a local model
 
-### Run the processes separately
+The default model name is qwen3:4b:
 
-```bash
-docker run -d --name signalroom-temporal \
-  -p 7233:7233 -p 8233:8233 \
-  temporalio/temporal:latest server start-dev --ip 0.0.0.0
-
-uv sync
-uv run python worker_supervisor.py
-```
-
-In another terminal:
-
-```bash
-uv run python server.py
-```
-
-### Use a fully local model
-
-[Qwen3-4B](https://huggingface.co/Qwen/Qwen3-4B) is Apache-2.0 licensed. Run it through [Ollama](https://github.com/ollama/ollama):
-
-```bash
+~~~bash
 ollama pull qwen3:4b
-SIGNALROOM_MODEL=ollama OLLAMA_MODEL=qwen3:4b ./scripts/dev.sh
-```
+OLLAMA_MODEL=qwen3:4b ./scripts/dev.sh
+~~~
 
-If Ollama is unavailable, the Worker safely falls back to the transparent rules engine and records that fallback in the decision.
+Any Ollama model that can return JSON can be selected. For example:
 
-## Outcome contracts
+~~~bash
+OLLAMA_MODEL=gpt-oss:20b ./scripts/dev.sh
+~~~
 
-Every supported signal defines what evidence closes the Workflow:
+The runtime rail shows whether the configured model is actually present. Every agent card records ollama/model-name or the explicit safe-fallback path.
 
-| Signal | Outcome question | Successful result | Unsuccessful result | Metric |
-| --- | --- | --- | --- | --- |
-| `workflow.stalled` | Did the workflow recover before its SLA? | Workflow resumed | SLA breached | Minutes to recovery |
-| `threshold.breached` | Was the asset stabilized? | Asset stabilized | Incident confirmed | Minutes outside threshold |
-| `document.uploaded` | What did compliance conclude? | Cleared review | Policy violation | Minutes to review |
-| `support.sla_risk` | Was the customer answered in time? | SLA avoided | SLA breached | Minutes before deadline |
-| `deploy.failed` | Did the service recover? | Service recovered | Recovery failed | Minutes to recovery |
+## Run the demonstration
 
-The UI can report these results for demonstration. In production, the same endpoint is called by webhooks or event consumers from the actual system of record.
+1. Click **Run the repair pipeline**.
+2. Watch the Event-to-Outcome Map and two investigation agents begin in parallel.
+3. At any non-terminal stage, click **Kill Agent Worker**.
+4. The UI shows Restarting, then a new PID and an incremented restart count.
+5. The replacement Worker replays Temporal history and resumes the unfinished Workflow task.
+6. At the Human stage, inspect the real diff, test result, branch, and commit.
+7. Click **Merge reviewed commit**.
+8. Wait for the Verification Agent and the green **Outcome reached** result.
 
-## Architecture
+The supervisor resurrects the process; Temporal preserves the work. Those are deliberately shown as separate responsibilities.
 
-The versioned Mermaid source is available at [`docs/signalroom-architecture.mmd`](docs/signalroom-architecture.mmd).
+## Query the local state
 
-```mermaid
-flowchart LR
-    subgraph client ["Event and Human Interfaces"]
-        eventSources["Enterprise Events and Outcome Webhooks"]
-        controlRoom["SignalRoom Control Room"]
-    end
-    subgraph gateway ["Ingress"]
-        api["SignalRoom API"]
-    end
-    subgraph service ["Durable Agent Services"]
-        workflowClient["Temporal Workflow Client"]
-        supervisor["Local Worker Supervisor"]
-        worker["SignalRoom Temporal Worker"]
-        decision["Policy and Local Model Activities"]
-        effects["Idempotent Action Activities"]
-        projector["Projection and Metrics"]
-    end
-    subgraph datastore ["State and Projections"]
-        sqlite["SQLite Projection"]
-    end
-    subgraph external ["Model and Effect Systems"]
-        ollama["Ollama with Qwen3"]
-        effectTargets["Business Effect APIs"]
-    end
-    subgraph async ["Durable Orchestration"]
-        temporal["Temporal Service and Event History"]
-    end
+SignalRoom’s projection:
 
-    eventSources -->|"Events and outcomes"| api
-    controlRoom -->|"Approval and review"| api
-    api -->|"Starts and signals"| workflowClient
-    api -->|"Reads views"| projector
-    workflowClient -.->|"Starts workflows"| temporal
-    supervisor -.->|"Starts and replaces process"| worker
-    temporal -.->|"Dispatches and records"| worker
-    worker -->|"Requests decisions"| decision
-    decision -.->|"Ollama: Local inference"| ollama
-    worker -->|"Executes once"| effects
-    effects -.->|"Effect APIs: Actions"| effectTargets
-    worker -->|"Projects state"| projector
-    projector -->|"Reads and writes"| sqlite
-```
+~~~bash
+sqlite3 signalroom.db
+~~~
 
-All network calls, model inference, database lookups and external actions are Activities. Workflow code contains deterministic orchestration and durable waits.
+~~~sql
+SELECT id, status, updated_at
+FROM agent_cases
+ORDER BY created_at DESC;
+~~~
 
-## Durability demonstration
+~~~sql
+SELECT
+  id,
+  json_extract(record, '$.commit.commit') AS reviewed_commit,
+  json_extract(record, '$.outcome.success') AS outcome_reached
+FROM agent_cases;
+~~~
 
-1. Open the **Event-to-Outcome Map**.
-2. Click **Run crash + resume demo**.
-3. SignalRoom starts a Workflow and pauses it at the business-outcome wait.
-4. The demo kills the current Worker and sends the outcome while no Worker is running.
-5. The supervisor starts a replacement Worker, which replays the same Workflow history and completes it.
-
-Temporal is the durable state owner, not a process manager. `worker_supervisor.py` restarts the local Worker process; Temporal retains the Workflow and queued signal so the replacement Worker can resume safely. The UI shows both responsibilities separately.
+Temporal’s authoritative Workflow history is visible at [http://127.0.0.1:8233](http://127.0.0.1:8233) or through the Temporal CLI inside the container.
 
 ## API
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/runtime` | Show Temporal connection state |
-| `POST` | `/api/demo/durability` | Start a shadow Workflow for the crash/recovery proof |
-| `POST` | `/api/demo/worker/crash` | Kill only the supervised local Worker (enabled by `scripts/dev.sh`) |
-| `GET` | `/api/events` | List projected event cases |
-| `POST` | `/api/events` | Start a durable event Workflow |
-| `GET` | `/api/events/:id` | Read one event-to-outcome record |
-| `POST` | `/api/events/:id/approve` | Signal approval to a waiting Workflow |
-| `POST` | `/api/events/:id/reject` | Signal rejection to a waiting Workflow |
-| `POST` | `/api/events/:id/outcome` | Report event-specific business evidence |
-| `POST` | `/api/events/:id/feedback` | Rate the intervention as useful or noisy |
-| `POST` | `/api/config` | Set `shadow`, `guarded` or `autonomous` mode |
-| `GET` | `/api/metrics` | Read completed and pending outcome metrics |
-
-Example outcome report:
-
-```bash
-curl -X POST http://127.0.0.1:4173/api/events/evt_demo/outcome \
-  -H 'content-type: application/json' \
-  -d '{
-    "code": "workflow_resumed",
-    "note": "The owner cleared a locked journal",
-    "metrics": {"recovery_time_minutes": 12}
-  }'
-```
+| GET | /api/runtime | Temporal, Worker, restart, and Ollama status |
+| GET | /api/agent-definitions | Runtime agent definitions |
+| GET | /api/cases | Case projection list |
+| GET | /api/cases/:id | Complete case, agent, evidence, and timeline projection |
+| POST | /api/lab/run | Create the real repair lab and start its parent Workflow |
+| POST | /api/demo/worker/crash | Kill only the supervised Worker |
+| POST | /api/cases/:id/approve-merge | Signal approval of the exact reviewed commit |
+| POST | /api/cases/:id/reject-merge | Signal rejection and close the case |
 
 ## Tests
 
-```bash
-uv run python -m unittest discover -s tests -v
-```
+~~~bash
+uv run python -m unittest discover -s tests -p 'test_*.py' -v
+~~~
 
-The suite verifies idempotent intake and action execution, policy boundaries, mismatched-signal rejection, and terminal business results for all five signal types.
+The test suite includes an end-to-end local Git repair: expected initial failure, patch, passing tests, commit, independent diff review, merge, and verification on main.
 
-## Operating principles
+## Important boundaries
 
-- **Shadow is the default.** A deployment earns the right to cause side effects.
-- **Durability is execution state, not memory.** A new Worker resumes the decision already made.
-- **Idempotency comes before intelligence.** Retries must not create repeated effects.
-- **Recommendation, execution and impact are different facts.** The UI names each one.
-- **Invalid signals stop early.** A type/description conflict cannot reach the model or tools.
-- **The Workflow stays open for evidence.** Activity is not counted as success.
+- Temporal coordinates deterministic control flow; it does not decide whether code is correct.
+- The harness and agent definitions decide which model/tool turn is allowed.
+- Tool implementations perform the real tests, Git edits, commits, and verification.
+- The human gate approves an immutable commit, not a vague recommendation.
+- A model response is never treated as evidence unless a tool produced the underlying result.
+- The lab repository is isolated and synthetic; it never edits the SignalRoom source repository.
 
 ## Open-source stack
 
 - SignalRoom: Apache License 2.0
-- Temporal Server and SDK: MIT
+- Temporal Server and Python SDK: MIT
 - Qwen3-4B: Apache License 2.0
+- gpt-oss: Apache License 2.0
 - Ollama: MIT
 - SQLite: public domain
 
-The companion essay is available as [BLOG.md](BLOG.md) and inside the running app at `/blog.html`.
+The companion essay is [BLOG.md](BLOG.md).
 
 ## License
 

@@ -8,7 +8,7 @@ PORT="${SIGNALROOM_PORT:-4173}"
 # A previous fallback server can survive after its Worker has stopped and keep
 # the demo port occupied. Replace only a process that identifies as SignalRoom;
 # never terminate an unrelated application using the same port.
-PORT_PID="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | sed -n '1p')"
+PORT_PID="$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | sed -n '1p' || true)"
 if [[ -n "$PORT_PID" ]]; then
   RUNTIME_RESPONSE="$(curl --max-time 1 -fsS "http://127.0.0.1:$PORT/api/runtime" 2>/dev/null || true)"
   if [[ "$RUNTIME_RESPONSE" == *'"instance_id": "signalroom-local"'* || "$RUNTIME_RESPONSE" == *'Temporal preserves Workflow history'* ]]; then
@@ -56,6 +56,14 @@ uv sync
 
 export SIGNALROOM_DB="${SIGNALROOM_DB:-$PROJECT_DIR/signalroom.db}"
 export SIGNALROOM_ENABLE_CHAOS_DEMO="${SIGNALROOM_ENABLE_CHAOS_DEMO:-1}"
+export SIGNALROOM_AGENT_MODEL="${SIGNALROOM_AGENT_MODEL:-ollama}"
+export OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:4b}"
+
+if curl --max-time 1 -fsS "http://127.0.0.1:11434/api/tags" >/dev/null 2>&1; then
+  echo "Ollama detected. Agents will request structured turns from $OLLAMA_MODEL."
+else
+  echo "Ollama is offline. Agents will use the same definitions with the deterministic safe policy."
+fi
 
 uv run python worker_supervisor.py &
 SUPERVISOR_PID=$!

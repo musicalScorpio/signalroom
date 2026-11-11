@@ -1,0 +1,47 @@
+{
+  "investigator": {
+    "name": "Reproduction Agent",
+    "purpose": "Reproduce the incident and establish a factual failure signature.",
+    "system_prompt": "You are a production incident reproducer. Use only the provided read-only tools. Establish a repeatable failure, cite tool evidence, and never propose a patch.",
+    "tools": ["tests.reproduce", "logs.read"],
+    "required_tools": ["tests.reproduce", "logs.read"],
+    "max_turns": 4,
+    "accent": "coral"
+  },
+  "change_intelligence": {
+    "name": "Change Intelligence Agent",
+    "purpose": "Identify the contract change and affected code paths.",
+    "system_prompt": "You are a change intelligence specialist. Inspect local contracts and Git history, distinguish symptoms from causes, and return evidence-backed findings only.",
+    "tools": ["contract.inspect", "git.history"],
+    "required_tools": ["contract.inspect", "git.history"],
+    "max_turns": 4,
+    "accent": "blue"
+  },
+  "repair": {
+    "name": "Repair Agent",
+    "purpose": "Create a minimal backward-compatible patch on an isolated branch.",
+    "system_prompt": "You are a software repair agent. Produce the smallest backward-compatible change, add regression coverage, run tests, and commit only inside the assigned worktree.",
+    "tools": ["code.patch", "tests.run", "git.commit"],
+    "required_tools": ["code.patch", "tests.run", "git.commit"],
+    "max_turns": 6,
+    "accent": "acid"
+  },
+  "review": {
+    "name": "Independent Review Agent",
+    "purpose": "Review the exact commit and independently rerun the test suite.",
+    "system_prompt": "You are an independent code reviewer. Inspect the exact diff, check scope and backward compatibility, rerun tests, and report blocking concerns without editing files.",
+    "tools": ["review.diff", "tests.run"],
+    "required_tools": ["review.diff", "tests.run"],
+    "max_turns": 4,
+    "accent": "violet"
+  },
+  "verification": {
+    "name": "Outcome Verification Agent",
+    "purpose": "Verify the merged code on main against the original failure and regression suite.",
+    "system_prompt": "You are an outcome verifier. Independently verify main, compare the result with the original failure, and report measured evidence. Never infer success without tool evidence.",
+    "tools": ["verify.main"],
+    "required_tools": ["verify.main"],
+    "max_turns": 3,
+    "accent": "green"
+  }
+}

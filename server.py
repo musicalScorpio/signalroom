@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from agent_harness import load_definitions, ollama_status
+from agent_store import CaseStore
 from signalroom_core import DEFAULT_DB, OUTCOME_CONTRACTS, WEB_ROOT, Engine, Store, seed
 from worker_runtime import INSTANCE_ID, PROJECT_ROOT, read_worker_state, safe_worker_pid
 
@@ -40,6 +42,7 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
     engine: Engine
     temporal: Any
     temporal_connected: bool
+    cases: CaseStore
 
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, directory=str(WEB_ROOT), **kwargs)
@@ -76,6 +79,16 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
         if path == "/api/metrics":
             self._json(self.store.metrics())
             return
+        if path == "/api/cases":
+            self._json({"cases": self.cases.list()})
+            return
+        if path == "/api/agent-definitions":
+            self._json({"agents": load_definitions()})
+            return
+        if path.startswith("/api/cases/"):
+            case = self.cases.get(path.rsplit("/", 1)[-1])
+            self._json(case if case else {"error": "Case not found"}, HTTPStatus.OK if case else HTTPStatus.NOT_FOUND)
+            return
         if path == "/api/runtime":
             self._json({
                 "instance_id": INSTANCE_ID,
@@ -86,6 +99,7 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
                 "temporal_ui": "http://127.0.0.1:8233" if self.temporal_connected else None,
                 "worker": read_worker_state(),
                 "chaos_demo_enabled": os.getenv("SIGNALROOM_ENABLE_CHAOS_DEMO", "0").lower() in {"1", "true", "on"},
+                "ollama": ollama_status(),
                 "explanation": "Temporal preserves Workflow history. The local supervisor restarts the Worker process, which replays that history and resumes.",
             })
             return
@@ -124,6 +138,51 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
                 self._json({"event": event, "duplicate": duplicate, "runtime": "local-fallback"}, HTTPStatus.OK if duplicate else HTTPStatus.CREATED)
             return
 
+        if path == "/api/lab/run":
+            if not self.temporal_connected:
+                self._json({"error": "The agent repair lab requires Temporal."}, HTTPStatus.SERVICE_UNAVAILABLE)
+                return
+            case_id = f"case_{uuid.uuid4().hex[:8]}"
+            definitions = load_definitions()
+            record = {
+                "id": case_id,
+                "title": "Inventory contract drift breaks checkout",
+                "status": "queued",
+                "event": {"type": "checkout.contract_failure", "source": "local-order-service", "summary": "Checkout request fails after Inventory Service moved to contract v2"},
+                "context": {}, "timeline": [], "evidence": {}, "branch": None, "commit": None,
+                "approval": {"state": "not_ready"}, "merge": None, "outcome": None,
+                "workflow_id": f"signalroom-case-{case_id}",
+                "agents": {agent_id: {"id": agent_id, "name": definition["name"], "purpose": definition["purpose"], "status": "queued", "turn": 0, "observations": [], "accent": definition.get("accent", "acid")} for agent_id, definition in definitions.items()},
+            }
+            self.cases.create(record)
+            created = self.temporal.start_incident({"case_id": case_id, "step_delay": float(body.get("step_delay", 0.35))})
+            if not created:
+                self._json({"error": "Case Workflow already exists"}, HTTPStatus.CONFLICT)
+                return
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline:
+                updated = self.cases.get(case_id)
+                if updated and updated["status"] != "queued":
+                    break
+                time.sleep(0.05)
+            self._json({"case": self.cases.get(case_id), "runtime": "temporal"}, HTTPStatus.CREATED)
+            return
+
+        if path.endswith("/approve-merge") or path.endswith("/reject-merge"):
+            parts = path.strip("/").split("/")
+            case_id = parts[-2]
+            case = self.cases.get(case_id)
+            if not case:
+                self._json({"error": "Case not found"}, HTTPStatus.NOT_FOUND)
+                return
+            if case["status"] != "awaiting_merge_approval":
+                self._json({"error": "Case is not waiting for merge approval"}, HTTPStatus.CONFLICT)
+                return
+            approved = path.endswith("/approve-merge")
+            self.temporal.decide_merge(case_id, approved, body.get("note", ""))
+            self._json({"accepted": True, "approved": approved, "case_id": case_id}, HTTPStatus.ACCEPTED)
+            return
+
         if path == "/api/demo/durability":
             if not self.temporal_connected:
                 self._json({"error": "The durability demo requires the Temporal runtime."}, HTTPStatus.SERVICE_UNAVAILABLE)
@@ -159,6 +218,9 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
             except ProcessLookupError:
                 self._json({"error": "The Worker exited before the crash signal arrived."}, HTTPStatus.CONFLICT)
                 return
+            case_id = body.get("case_id")
+            if case_id and self.cases.get(case_id):
+                self.cases.timeline(case_id, "worker", "Agent Worker killed", f"Worker PID {worker_pid} was terminated. Temporal retains every completed agent and tool result.", {"worker_pid": worker_pid}, status="interrupted")
             self._json({
                 "accepted": True,
                 "killed_worker_pid": worker_pid,
@@ -229,11 +291,12 @@ class SignalRoomHandler(SimpleHTTPRequestHandler):
 
 def make_server(host: str, port: int, db_path: Path = DEFAULT_DB) -> ThreadingHTTPServer:
     store = Store(db_path)
+    cases = CaseStore(db_path)
     engine = Engine(store)
     seed(store, engine)
     temporal = TemporalBridge() if TemporalBridge else None
     temporal_connected = bool(temporal and temporal.available())
-    handler = type("ConfiguredSignalRoomHandler", (SignalRoomHandler,), {"store": store, "engine": engine, "temporal": temporal, "temporal_connected": temporal_connected})
+    handler = type("ConfiguredSignalRoomHandler", (SignalRoomHandler,), {"store": store, "cases": cases, "engine": engine, "temporal": temporal, "temporal_connected": temporal_connected})
     return ThreadingHTTPServer((host, port), handler)
 
 

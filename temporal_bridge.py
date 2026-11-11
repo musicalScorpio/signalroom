@@ -11,6 +11,7 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
+from agent_workflows import IncidentCaseWorkflow
 from temporal_workflows import EventCaseWorkflow
 
 
@@ -55,6 +56,29 @@ class TemporalBridge:
             return True
         except WorkflowAlreadyStartedError:
             return False
+
+    def start_incident(self, case: dict[str, Any]) -> bool:
+        return bool(self._run(self._start_incident(case), timeout=12.0))
+
+    async def _start_incident(self, case: dict[str, Any]) -> bool:
+        client = await self._connect()
+        try:
+            await client.start_workflow(
+                IncidentCaseWorkflow.run, case,
+                id=f"signalroom-case-{case['case_id']}", task_queue=self.task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            )
+            return True
+        except WorkflowAlreadyStartedError:
+            return False
+
+    def decide_merge(self, case_id: str, approved: bool, note: str = "") -> None:
+        self._run(self._decide_merge(case_id, approved, note))
+
+    async def _decide_merge(self, case_id: str, approved: bool, note: str) -> None:
+        client = await self._connect()
+        handle = client.get_workflow_handle(f"signalroom-case-{case_id}")
+        await handle.signal(IncidentCaseWorkflow.merge_decision, {"approved": approved, "note": note})
 
     def approve(self, event_id: str, approved: bool, note: str = "") -> None:
         self._run(self._approve(event_id, approved, note))
