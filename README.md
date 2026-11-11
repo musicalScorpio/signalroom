@@ -26,6 +26,20 @@ A successful case ends only when all of these facts exist:
 
 “Agent finished” is not the outcome. The verified checkout response and passing tests are the outcome.
 
+## Tech stack
+
+| Layer | Technology | Role in SignalRoom |
+| --- | --- | --- |
+| Operator UI | Vanilla HTML, CSS, and JavaScript | Live pipeline map, agent status, evidence, approval, recovery, and outcome views without a frontend build step |
+| Local API | Python 3.11 standard-library HTTP server | Serves the UI and exposes case, runtime, crash-demo, and approval endpoints |
+| Durable orchestration | Temporal Server and Temporal Python SDK 1.35 | Stores Workflow Event History, schedules tasks, runs child Workflows, and preserves durable waits |
+| Agent runtime | Python agent harness with JSON command contracts | Loads versioned definitions, validates model responses, and restricts every agent to allowlisted tools |
+| Local inference | Ollama with Qwen3, gpt-oss, or another JSON-capable open model | Produces structured agent tool and completion commands entirely on the local machine |
+| Projection store | SQLite | Stores the operator-facing case, agent, evidence, and timeline projection |
+| Repair environment | Git and Python unittest | Creates the isolated repository, branch, patch, test evidence, commit, review, merge, and verification |
+| Process recovery | Python Worker supervisor | Restarts a killed Worker while Temporal retains the authoritative Workflow state |
+| Runtime packaging | Docker or Colima, uv, and pip-compatible requirements | Runs Temporal locally and provides reproducible Python dependency installation |
+
 ## Architecture
 
 The diagram source lives in [docs/signalroom-architecture.mmd](docs/signalroom-architecture.mmd).
@@ -92,6 +106,7 @@ The model never receives an unrestricted shell. It selects from the definition�
 
 Requirements:
 
+- Python 3.11 or newer
 - Docker or Colima
 - [uv](https://github.com/astral-sh/uv)
 - Optional: [Ollama](https://github.com/ollama/ollama) with a local open model
@@ -101,6 +116,16 @@ cd /Users/musicalscorpio/Documents/Codex/2026-11-09/this-time-i-an-tryign-to-2/o
 chmod +x scripts/dev.sh
 ./scripts/dev.sh
 ~~~
+
+The project also includes [requirements.txt](requirements.txt) for a conventional pip environment:
+
+~~~bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+~~~
+
+The dependency versions in requirements.txt match uv.lock. The launcher still uses uv by default because it also starts and coordinates the local services.
 
 Open:
 
