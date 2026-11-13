@@ -339,7 +339,7 @@ signalroom/
 │   ├── runtime/                 Worker, supervisor, and process state
 │   ├── storage/                 SQLite case projection
 │   └── legacy/                  Generic event-to-outcome demonstration
-├── frontend/                    Control room, styling, JavaScript, and essay
+├── frontend/                    Control room, styling, and JavaScript
 ├── docs/                        Architecture diagram source
 ├── infra/                       Local Temporal Compose configuration
 ├── scripts/
@@ -348,7 +348,6 @@ signalroom/
 │   └── test.sh                 Unit, integration, and browser test launcher
 ├── tests/                       Unit, integration, and Playwright suites
 ├── third_party_service/         Demo-only payment API and independent SQLite store
-├── BLOG.md                      Companion essay
 ├── requirements.txt             Pinned runtime dependencies
 └── pyproject.toml
 ~~~
@@ -379,8 +378,6 @@ Generated runtime data lives under `.signalroom/` and is excluded from Git.
 - gpt-oss: Apache License 2.0
 - Ollama: MIT
 - SQLite: public domain
-
-Read the companion essay: [Agents Are Becoming Less Dependent on Human Initiation—Not Human Accountability](BLOG.md).
 
 ## License
 
