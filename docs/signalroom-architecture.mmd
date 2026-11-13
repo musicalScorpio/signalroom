@@ -1,37 +1,49 @@
 flowchart LR
     subgraph client ["Operator Surface"]
-        browser["SignalRoom control room"]
+        browser["SignalRoom control room<br/>start · inspect · kill · approve"]
     end
 
     subgraph gateway ["Local Interface"]
-        http["HTTP and static web server"]
-    end
-
-    subgraph service ["Agent Execution Plane"]
-        api["SignalRoom API and Temporal client"]
-        supervisor["Worker supervisor"]
-        worker["Temporal Worker: orchestrator, five bounded agents, typed Activities, and patch validator"]
+        http["SignalRoom HTTP API<br/>Temporal client + provider evidence reader"]
     end
 
     subgraph async ["Durable Control Plane"]
-        temporal["Temporal Server: Workflow Event History, task queues, retries, and Signals"]
+        temporal["Temporal Server<br/>Event History · task queue · retries · timers · Signals"]
+    end
+
+    subgraph service ["Agent Execution Plane"]
+        supervisor["Worker supervisor"]
+        worker["Temporal Worker<br/>Workflow replay + Activity execution"]
+        agents["Six bounded agents<br/>five child Workflows + policy-bound side-effect Activities"]
+        tools["Typed tools<br/>path guards · tests · Git · provider policy"]
     end
 
     subgraph datastore ["Evidence and Artifacts"]
-        sqlite["SQLite operator projection: cases, agents, evidence, and timeline"]
-        gitlab["Per-case Git repair lab: code, tests, branch, commit, and merge"]
+        sqlite["SignalRoom SQLite<br/>operator projection + case timeline"]
+        gitlab["Per-case Git lab<br/>source · tests · branch · reviewed commit · merge"]
     end
 
-    subgraph external ["Local Model Runtime"]
-        ollama["Ollama: local reasoning and source-code generation"]
+    subgraph model ["Local Model Runtime"]
+        ollama["Ollama<br/>diagnosis · tool selection · replacement source"]
     end
 
-    browser -->|"HTTP actions and live polling"| http
-    http -->|"Routes UI and API requests"| api
-    api -.->|"gRPC: start, query, and Signal"| temporal
-    temporal -.->|"Schedules Workflow and Activity tasks"| worker
-    supervisor -->|"Spawns and respawns the process"| worker
-    api -->|"Reads and writes the UI projection"| sqlite
-    worker -->|"Records agents, evidence, and stages"| sqlite
-    worker -->|"Validates and applies model-authored source"| gitlab
-    worker -.->|"Ollama: inspect, diagnose, author, and iterate"| ollama
+    subgraph provider ["Demo External Boundary"]
+        paymentapi["Local third-party payment API<br/>idempotent POST · unsafe POST · safe GET"]
+        paymentdb["Provider-owned SQLite<br/>payments · key receipts · request audit"]
+    end
+
+    browser -->|"HTTP actions and polling"| http
+    http -.->|"gRPC: start Workflow + approval Signal"| temporal
+    temporal -.->|"schedule or replay unresolved tasks"| worker
+    supervisor -->|"spawn replacement process"| worker
+    worker -->|"run child Workflows"| agents
+    agents -->|"validated commands"| tools
+    agents -.->|"structured local model turns"| ollama
+    tools -->|"guarded patch · test · commit · merge"| gitlab
+    tools -->|"stable-key POST, one-shot POST, or safe GET"| paymentapi
+    worker -->|"project stages, agents, context, and evidence"| sqlite
+    http -->|"read case projection"| sqlite
+    http -->|"read provider proof"| paymentapi
+    paymentapi -->|"own transaction boundary"| paymentdb
+
+    temporal -. "recorded history survives Worker death" .-> worker

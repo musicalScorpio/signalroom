@@ -11,7 +11,8 @@ from temporalio.client import Client
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
-from backend.orchestration.workflows import IncidentCaseWorkflow
+from backend.orchestration.workflows import AgentWorkflow, IncidentCaseWorkflow
+from backend.reliability.workflows import SideEffectReliabilityWorkflow
 from backend.legacy.workflows import EventCaseWorkflow
 
 
@@ -72,6 +73,31 @@ class TemporalBridge:
         except WorkflowAlreadyStartedError:
             return False
 
+    def start_reliability_run(self, payload: dict[str, Any]) -> bool:
+        return bool(self._run(self._start_reliability_run(payload), timeout=12.0))
+
+    async def _start_reliability_run(self, payload: dict[str, Any]) -> bool:
+        client = await self._connect()
+        try:
+            await client.start_workflow(
+                SideEffectReliabilityWorkflow.run,
+                payload,
+                id=f"signalroom-side-effect-{payload['run_id']}",
+                task_queue=self.task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            )
+            return True
+        except WorkflowAlreadyStartedError:
+            return False
+
+    def query_reliability_run(self, run_id: str) -> dict[str, Any]:
+        return self._run(self._query_reliability_run(run_id))
+
+    async def _query_reliability_run(self, run_id: str) -> dict[str, Any]:
+        client = await self._connect()
+        handle = client.get_workflow_handle(f"signalroom-side-effect-{run_id}")
+        return await handle.query(SideEffectReliabilityWorkflow.current_state)
+
     def decide_merge(self, case_id: str, approved: bool, note: str = "") -> None:
         self._run(self._decide_merge(case_id, approved, note))
 
@@ -87,6 +113,15 @@ class TemporalBridge:
         client = await self._connect()
         handle = client.get_workflow_handle(f"signalroom-case-{case_id}")
         return await handle.query(IncidentCaseWorkflow.current_state)
+
+    def query_agent(self, case_id: str, agent_id: str) -> dict[str, Any]:
+        """Read the replayed state of one durable child Agent Workflow."""
+        return self._run(self._query_agent(case_id, agent_id))
+
+    async def _query_agent(self, case_id: str, agent_id: str) -> dict[str, Any]:
+        client = await self._connect()
+        handle = client.get_workflow_handle(f"signalroom-{case_id}-{agent_id}")
+        return await handle.query(AgentWorkflow.current_state)
 
     def approve(self, event_id: str, approved: bool, note: str = "") -> None:
         self._run(self._approve(event_id, approved, note))

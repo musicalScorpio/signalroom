@@ -10,6 +10,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from backend.ollama_runtime import ollama_status, selected_ollama_model
+
 DEFINITIONS_PATH = Path(__file__).with_name("definitions.json")
 _OLLAMA_LOCK = threading.Lock()
 
@@ -34,6 +36,44 @@ TOOL_CONTRACTS: dict[str, dict[str, Any]] = {
 }
 
 
+def ollama_think_setting(model_name: str) -> bool | str:
+    """Use the model's supported reasoning control without exhausting output tokens."""
+    configured = os.getenv("OLLAMA_THINK")
+    if configured is not None:
+        normalized = configured.strip().lower()
+        if normalized in {"0", "false", "off", "no"}:
+            return False
+        if normalized in {"1", "true", "on", "yes"}:
+            return True
+        return normalized
+    # gpt-oss emits a reasoning channel even when think=false. Low keeps enough
+    # of the generation budget for the required JSON and replacement source.
+    return "low" if model_name.lower().startswith("gpt-oss") else False
+
+
+def parse_model_json(content: str) -> dict[str, Any]:
+    """Parse one complete JSON object while tolerating harmless trailing chatter."""
+    text = content.strip()
+    if text.startswith("```"):
+        first_line, _, remainder = text.partition("\n")
+        text = remainder.rsplit("```", 1)[0].strip() if first_line.lower() in {"```", "```json"} else text
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("Model response does not contain a JSON object")
+    value, _end = json.JSONDecoder().raw_decode(text[start:])
+    if not isinstance(value, dict):
+        raise ValueError("Model response JSON must be an object")
+    return value
+
+
+def ollama_output_budget(repair_generation: bool) -> int:
+    """Keep local turns concise while leaving enough room for a source replacement."""
+    configured = os.getenv("OLLAMA_NUM_PREDICT")
+    if configured:
+        return int(configured)
+    return 4096 if repair_generation else 512
+
+
 def load_definitions() -> dict[str, dict[str, Any]]:
     definitions = json.loads(DEFINITIONS_PATH.read_text(encoding="utf-8"))
     required = {"name", "purpose", "system_prompt", "tools", "required_tools", "max_turns"}
@@ -44,20 +84,6 @@ def load_definitions() -> dict[str, dict[str, Any]]:
         if not set(definition["required_tools"]).issubset(definition["tools"]):
             raise ValueError(f"Agent {agent_id} requires tools outside its allowlist")
     return definitions
-
-
-def ollama_status() -> dict[str, Any]:
-    endpoint = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-    tags = endpoint.rsplit("/api/", 1)[0] + "/api/tags"
-    try:
-        with urllib.request.urlopen(tags, timeout=0.8) as response:
-            payload = json.loads(response.read())
-        configured = os.getenv("OLLAMA_MODEL", "qwen3:4b")
-        available = [item.get("name") for item in payload.get("models", [])]
-        model_available = configured in available or any(name and name.split(":", 1)[0] == configured for name in available)
-        return {"connected": True, "model": configured, "model_available": model_available, "available": available}
-    except Exception:
-        return {"connected": False, "model": os.getenv("OLLAMA_MODEL", "qwen3:4b"), "model_available": False, "available": []}
 
 
 def _fallback(definition: dict[str, Any], observations: list[dict[str, Any]]) -> dict[str, Any]:
@@ -137,7 +163,11 @@ def _command_error(command: dict[str, Any], definition: dict[str, Any], observat
 
 def _repair_control_command(definition: dict[str, Any], observations: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Keep deterministic workflow mechanics outside the model; return None when Ollama must author code."""
-    authored_mode = f"ollama/{os.getenv('OLLAMA_MODEL', 'qwen3:4b')} + guarded-tools"
+    try:
+        model_name = selected_ollama_model()
+    except RuntimeError:
+        model_name = "unavailable"
+    authored_mode = f"ollama/{model_name} + guarded-tools"
     inspect_index = _latest_tool_index(observations, "code.inspect")
     patch_index = _latest_tool_index(observations, "code.patch")
     test_index = _latest_tool_index(observations, "tests.run")
@@ -203,7 +233,16 @@ def _repair_model_context(case_context: dict[str, Any], observations: list[dict[
         "editable_file": "order_service.py",
         "current_order_service.py": last_successful_patch.get("replacement_content") or inspection.get("order_service.py", ""),
         "dependency_inventory_service.py": inspection.get("inventory_service.py", ""),
+        "provided_payment_gateway.py": inspection.get("payment_gateway.py", ""),
         "tests_test_contract.py": inspection.get("tests/test_contract.py", ""),
+        "side_effect_strategy": case_context.get("side_effect_strategy", "none"),
+        "external_call_requirement": (
+            "Import create_payment from payment_gateway. After inventory acceptance call it exactly once using "
+            "SIGNALROOM_PAYMENT_CODE and SIGNALROOM_AMOUNT_CENTS from os.environ, and return its receipt under "
+            "the checkout result's payment key. Never call it for a rejected checkout."
+            if case_context.get("side_effect_strategy", "none") != "none" else
+            "This run has no external API side effect; repair only the inventory compatibility defect."
+        ),
         "runtime_log": inspection.get("runtime.log", ""),
         "latest_test_result": {
             "exit_code": latest_tests.get("exit_code"),
@@ -223,7 +262,12 @@ def model_turn(definition: dict[str, Any], case_context: dict[str, Any], observa
         if definition.get("requires_model"):
             raise RuntimeError("Repair Agent requires Ollama to author source code; deterministic fallback is disabled")
         return fallback
-    model_name = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+    try:
+        model_name = selected_ollama_model()
+    except RuntimeError as error:
+        if definition.get("requires_model"):
+            raise RuntimeError(f"Repair Agent requires a local Ollama model: {error}") from error
+        model_name = "unavailable"
 
     def attempted_fallback(reason: str) -> dict[str, Any]:
         if definition.get("requires_model"):
@@ -246,7 +290,7 @@ def model_turn(definition: dict[str, Any], case_context: dict[str, Any], observa
     repair_generation = bool(definition.get("requires_model"))
     if repair_generation:
         prompt = {
-            "task": "Diagnose the defect and author the complete corrected order_service.py source. Preserve backward compatibility and do not modify tests.",
+            "task": "Diagnose the defect and author the complete corrected order_service.py source. Preserve backward compatibility, satisfy the selected external-call contract when present, and do not modify tests.",
             "evidence": _repair_model_context(case_context, observations),
             "response_schema": {
                 "diagnosis": "concise defect diagnosis",
@@ -261,6 +305,7 @@ def model_turn(definition: dict[str, Any], case_context: dict[str, Any], observa
                 "Do not modify tests",
                 "Do not claim tests have passed",
                 "Keep replacement_content focused and under 3000 characters",
+                "Keep diagnosis and reasoning_summary under 80 words each",
             ],
         }
     else:
@@ -276,6 +321,7 @@ def model_turn(definition: dict[str, Any], case_context: dict[str, Any], observa
                 "Use only available tools and their exact argument contracts",
                 "Complete only after required tools are used",
                 "Do not claim evidence not present in observations",
+                "Keep summary and result text under 80 words",
             ],
         }
     system_message = (
@@ -286,17 +332,24 @@ def model_turn(definition: dict[str, Any], case_context: dict[str, Any], observa
     request = urllib.request.Request(
         os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/chat"),
         data=json.dumps({
-            "model": model_name, "stream": False, "think": False, "format": "json",
+            "model": model_name, "stream": False, "think": ollama_think_setting(model_name), "format": "json",
             "messages": [{"role": "system", "content": system_message}, {"role": "user", "content": json.dumps(prompt)}],
-            "options": {"temperature": 0.1, "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "8192"))},
+            "options": {"temperature": 0.1, "num_predict": ollama_output_budget(repair_generation)},
         }).encode(),
         headers={"Content-Type": "application/json"},
     )
     try:
         with _OLLAMA_LOCK:
-            with urllib.request.urlopen(request, timeout=float(os.getenv("OLLAMA_TIMEOUT", "45"))) as response:
+            with urllib.request.urlopen(request, timeout=float(os.getenv("OLLAMA_TIMEOUT", "180"))) as response:
                 raw = json.loads(response.read())
-        model_output = json.loads(raw.get("message", {}).get("content", "{}"))
+        content = raw.get("message", {}).get("content", "")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError(
+                "Ollama returned no final JSON content "
+                f"(done_reason={raw.get('done_reason', 'unknown')}, "
+                f"thinking_chars={len(str(raw.get('message', {}).get('thinking', '')))})"
+            )
+        model_output = parse_model_json(content)
         if repair_generation:
             command = {
                 "type": "call_tool",

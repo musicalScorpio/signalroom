@@ -20,15 +20,25 @@
     "accent": "blue"
   },
   "repair": {
-    "version": "2.0.0",
+    "version": "3.0.0",
     "name": "Repair Agent",
-    "purpose": "Diagnose the recorded failure and author a minimal backward-compatible source repair on an isolated branch.",
-    "system_prompt": "You are the code-fixing agent. Inspect the bounded repository evidence, reason from the failing tests and contracts, and author the complete replacement source yourself. Call code.inspect first. Then call code.patch with file=order_service.py, replacement_content containing your complete implementation, and a concise rationale. Run tests after every patch. If tests fail, use the returned failure to author a corrected replacement and test again. Call git.commit only after the latest tests pass. Never invent test results, never use an unrestricted shell, and never ask a tool to supply a predefined fix.",
+    "purpose": "Diagnose the failure and author the inventory repair plus the selected provider integration on an isolated branch.",
+    "system_prompt": "You are the code-fixing agent. Inspect the bounded repository evidence, tests, side-effect strategy, and provided payment adapter. Author the complete replacement source yourself. For API modes, the accepted checkout must make exactly one adapter call and return its receipt; rejected checkouts must make none. Run tests after every patch and commit only the passing source. Never invent evidence or use an unrestricted shell.",
     "tools": ["code.inspect", "code.patch", "tests.run", "git.commit"],
     "required_tools": ["code.inspect", "code.patch", "tests.run", "git.commit"],
     "requires_model": true,
     "max_turns": 10,
     "accent": "acid"
+  },
+  "side_effect": {
+    "version": "1.0.0",
+    "name": "Side-Effect Execution Agent",
+    "purpose": "Execute the repaired checkout under a durable API safety policy and reconcile an ambiguous result without duplicating the effect.",
+    "system_prompt": "You execute only the reviewed branch and the selected durable side-effect policy. Reuse the stable operation identity, never exceed the configured POST attempts, and prefer safe provider reads when the POST result is ambiguous.",
+    "tools": ["payments.create_idempotent", "payments.create_once", "payments.lookup"],
+    "required_tools": [],
+    "max_turns": 4,
+    "accent": "blue"
   },
   "review": {
     "version": "1.0.0",

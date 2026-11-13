@@ -6,7 +6,7 @@
   <meta name="description" content="SignalRoom turns local system events into durable, reviewable agent outcomes.">
   <title>SignalRoom — Durable agent operations</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23171815'/%3E%3Cpath d='M13 42h8V29h-8zm15 0h8V14h-8zm15 0h8V23h-8z' fill='%23d7ff55'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="/styles.css?v=agents-8">
+  <link rel="stylesheet" href="/styles.css?v=unified-proof-9">
 </head>
 <body>
   <div class="noise" aria-hidden="true"></div>
@@ -15,7 +15,7 @@
     <p class="runtime-label"><span class="status-dot" id="header-dot"></span><span id="runtime-indicator">Checking local runtime</span></p>
     <div class="header-actions">
       <button class="button button-quiet" id="definitions-button">Agent definitions</button>
-      <button class="button button-primary" id="trigger-button">Trigger incident <span>↗</span></button>
+      <button class="button danger-button" id="kill-worker-button" disabled><span class="danger-dot"></span><span id="kill-worker-label">Kill Agent Worker</span></button>
     </div>
   </header>
 
@@ -25,10 +25,21 @@
       <div class="hero-grid">
         <div>
           <h1>A failure becomes<br>a durable <em>case.</em></h1>
-          <p class="hero-lede">Watch five bounded agents reproduce a real contract failure, create a Git repair, survive a dead Worker, request your approval, merge, and prove the outcome.</p>
-          <div class="hero-actions">
-            <button class="button button-primary button-large" id="hero-trigger">Run the repair pipeline <span>↗</span></button>
-            <span class="local-note">Runs only on this machine</span>
+          <p class="hero-lede">Watch six bounded agents reproduce a real contract failure, author and review a Git repair, prove an external effect safely, survive a dead Worker, request your approval, merge, and verify the outcome.</p>
+          <div class="pipeline-launch">
+            <label for="repair-strategy"><span>External-effect proof</span>
+              <select id="repair-strategy">
+                <option value="none">Code repair only · no external API</option>
+                <option value="native_idempotency">Idempotent API · retry POST with the same key</option>
+                <option value="at_most_once">Non-idempotent API · maximumAttempts=1</option>
+                <option value="validation">Non-idempotent API · 0 POST retries + GET recovery</option>
+              </select>
+            </label>
+            <label class="auto-crash-control"><input type="checkbox" id="auto-crash"><span><strong>Auto-kill Worker in result gap</strong><small>Selecting this also chooses the idempotent API scenario</small></span></label>
+            <div class="hero-actions">
+              <button class="button button-primary button-large" id="hero-trigger">Run the repair pipeline <span>↗</span></button>
+              <span class="local-note">Runs only on this machine</span>
+            </div>
           </div>
         </div>
         <div class="thesis-card">
@@ -42,14 +53,13 @@
     <section class="runtime-section" aria-labelledby="runtime-title">
       <div class="section-heading compact">
         <div><p class="eyebrow"><span>02</span> Durable runtime</p><h2 id="runtime-title">Who owns what</h2></div>
-        <button class="button danger-button" id="kill-worker-button" disabled><span class="danger-dot"></span>Kill Agent Worker</button>
       </div>
       <div class="runtime-rail">
         <article><span>Temporal service</span><strong id="temporal-status">Checking</strong><small>Workflow history + task scheduling</small></article>
         <b>→</b>
         <article><span>Agent Worker</span><strong id="worker-status">Checking</strong><small id="worker-detail">Executes workflow and activities</small></article>
         <b>→</b>
-        <article><span>Ollama harness</span><strong id="ollama-status">Checking</strong><small id="ollama-detail">Structured local model turns</small></article>
+        <article><span>Ollama model runtime</span><strong id="ollama-status">Checking</strong><small id="ollama-detail">Serves the selected local model</small></article>
         <b>→</b>
         <article><span>Recovery proof</span><strong id="restart-count">0 restarts</strong><small>Supervisor replaces the Worker process</small></article>
       </div>
@@ -89,32 +99,6 @@
       <div class="agent-grid" id="agent-grid"></div>
     </section>
 
-    <section class="architecture-section" aria-labelledby="architecture-title">
-      <div class="section-heading">
-        <div><p class="eyebrow"><span>06</span> System architecture</p><h2 id="architecture-title">Control flow vs. evidence</h2></div>
-        <p class="section-meta">Solid lines initiate work. Temporal records orchestration; SQLite projects evidence for the operator.</p>
-      </div>
-      <div class="architecture-scroll">
-        <div class="architecture-board" role="img" aria-label="SignalRoom local system architecture">
-          <div class="architecture-node acid"><span>Interface</span><strong>SignalRoom UI</strong><small>event + human approval</small></div>
-          <b>REST</b>
-          <div class="architecture-node"><span>Ingress</span><strong>Local API</strong><small>Temporal gRPC client</small></div>
-          <b>start / signal</b>
-          <div class="architecture-node dark"><span>Durable state</span><strong>Temporal</strong><small>history + task queues</small></div>
-          <b>workflow tasks</b>
-          <div class="architecture-node blue"><span>Execution</span><strong>Agent Worker</strong><small>parent + child workflows</small></div>
-          <b>activities</b>
-          <div class="architecture-node violet"><span>Bounded work</span><strong>Agent harness</strong><small>prompts + typed tools</small></div>
-          <div class="architecture-branches">
-            <div class="architecture-node mini"><strong>Ollama</strong><small>local model turns</small></div>
-            <div class="architecture-node mini"><strong>Git repair lab</strong><small>code, tests, commits</small></div>
-            <div class="architecture-node mini"><strong>SQLite</strong><small>UI projection</small></div>
-          </div>
-          <div class="supervisor-line"><span>Worker supervisor</span><b>respawns process only ↗</b></div>
-        </div>
-      </div>
-    </section>
-
     <section class="approval-panel" id="approval-panel" hidden aria-labelledby="approval-title">
       <div class="approval-copy">
         <p class="eyebrow"><span>Human gate</span> Temporal is waiting</p>
@@ -134,14 +118,38 @@
 
     <section class="evidence-grid">
       <section class="evidence-panel panel">
-        <div class="panel-heading"><div><p class="eyebrow"><span>07</span> Evidence</p><h2>Tool results</h2></div></div>
-        <div class="evidence-tabs" id="evidence-tabs"></div>
+        <div class="panel-heading"><div><p class="eyebrow"><span>06</span> Evidence</p><h2>Tool results</h2></div></div>
+        <div class="evidence-tabs" id="evidence-tabs" data-scroll-key="evidence-tabs"></div>
         <div class="evidence-viewer" id="evidence-viewer"><p class="empty">Agent tool results will appear here.</p></div>
       </section>
       <section class="timeline-panel panel">
-        <div class="panel-heading"><div><p class="eyebrow"><span>08</span> Durable record</p><h2>Case timeline</h2></div><div class="timeline-legend" id="timeline-legend" aria-label="Visible timeline event types"></div></div>
-        <ol class="timeline" id="timeline"><li class="empty">No transitions recorded.</li></ol>
+        <div class="panel-heading"><div><p class="eyebrow"><span>07</span> Durable recovery</p><h2>What the agent picked up</h2></div><div class="timeline-legend" id="timeline-legend" aria-label="Visible timeline event types"></div></div>
+        <section class="recovery-proof" id="recovery-proof" hidden aria-live="polite"></section>
+        <nav class="timeline-filters" id="timeline-filters" aria-label="Timeline view"></nav>
+        <ol class="timeline" id="timeline" data-scroll-key="case-timeline-list"><li class="empty">No transitions recorded.</li></ol>
       </section>
+    </section>
+
+    <section class="reliability-section" aria-labelledby="reliability-title">
+      <div class="section-heading">
+        <div><p class="eyebrow"><span>08</span> External-effect proof</p><h2 id="reliability-title">Provider truth vs. Temporal knowledge</h2></div>
+        <p class="section-meta">This is part of the selected repair case: the reviewed code calls the provider, the Worker may die, and the agent follows the recorded recovery policy.</p>
+      </div>
+      <div class="strategy-note" id="strategy-note"></div>
+      <div class="reliability-status" id="reliability-status">
+        <p class="empty">Run a case to see its code-to-provider proof.</p>
+      </div>
+      <div class="external-call-flow" id="external-call-flow" aria-live="polite"></div>
+      <div class="reliability-grid">
+        <article class="panel reliability-trace-panel">
+          <div class="panel-heading"><div><p class="eyebrow"><span>Agent + Temporal</span> Same case history</p><h3>API decision and recovery trail</h3></div><span class="status-chip" id="reliability-run-status">idle</span></div>
+          <ol class="reliability-timeline" id="reliability-timeline" data-scroll-key="external-timeline-list"><li class="empty">No API events in this case.</li></ol>
+        </article>
+        <article class="panel provider-panel">
+          <div class="panel-heading"><div><p class="eyebrow"><span>Provider</span> Separate local boundary</p><h3>External API evidence</h3></div><div class="provider-live"><span class="live-refresh" id="provider-refresh">Refreshing…</span><span class="provider-health" id="provider-health">Checking</span></div></div>
+          <div class="provider-data" id="provider-data"><p class="empty">External records will appear here.</p></div>
+        </article>
+      </div>
     </section>
   </main>
 
@@ -152,6 +160,6 @@
     <pre><code id="definitions-code">Loading…</code></pre>
   </dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="/app.js?v=agents-8"></script>
+  <script src="/app.js?v=unified-proof-10"></script>
 </body>
 </html>

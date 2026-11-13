@@ -10,7 +10,7 @@ if ! ./.venv/bin/python -c "import playwright" >/dev/null 2>&1; then
 fi
 
 echo "Running unit and integration tests..."
-./.venv/bin/python -m unittest -v tests.test_agent_pipeline tests.test_signalroom
+./.venv/bin/python -m unittest -v tests.test_agent_pipeline tests.test_signalroom tests.test_reliability_lab
 ./.venv/bin/python -m unittest discover -s tests/integration -t . -p 'test_*.py' -v
 
 echo "Running Playwright browser tests against ${SIGNALROOM_BASE_URL:-http://127.0.0.1:4173}..."

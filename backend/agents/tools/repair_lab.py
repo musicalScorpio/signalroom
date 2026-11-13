@@ -43,6 +43,48 @@ def checkout(sku: str, quantity: int) -> dict:
     return {"status": "accepted", "sku": sku, "quantity": quantity}
 '''
 
+PAYMENT_GATEWAY_SOURCE = '''"""Demo-only adapter for the separate local payment provider.
+
+The generated repair calls this adapter. Unit tests and post-merge verification set
+SIGNALROOM_DISABLE_EXTERNAL=1; the pre-merge Temporal Activity deliberately enables
+the real local HTTP call so the result-gap recovery is observable.
+"""
+
+import json
+import os
+import urllib.parse
+import urllib.request
+
+
+def _request(path: str, method: str = "GET", payload: dict | None = None, headers: dict | None = None) -> dict:
+    request = urllib.request.Request(
+        f"{os.getenv('THIRD_PARTY_BASE_URL', 'http://127.0.0.1:4180').rstrip('/')}{path}",
+        data=json.dumps(payload).encode() if payload is not None else None,
+        headers={"Content-Type": "application/json", **(headers or {})},
+        method=method,
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return json.load(response)
+
+
+def create_payment(payment_code: str, amount_cents: int) -> dict:
+    if os.getenv("SIGNALROOM_DISABLE_EXTERNAL", "0") == "1":
+        return {"simulated": True, "payment": {"payment_code": payment_code, "amount_cents": amount_cents}}
+    strategy = os.environ["SIGNALROOM_SIDE_EFFECT_STRATEGY"]
+    payload = {"payment_code": payment_code, "amount_cents": amount_cents}
+    if strategy == "native_idempotency":
+        return _request(
+            "/payments/idempotent", "POST", payload,
+            {"Idempotency-Key": os.environ["SIGNALROOM_OPERATION_ID"]},
+        )
+    return _request("/payments/non-idempotent", "POST", payload)
+
+
+def find_payment(payment_code: str) -> dict:
+    query = urllib.parse.urlencode({"payment_code": payment_code, "audit": "1"})
+    return _request(f"/payments?{query}")
+'''
+
 TEST_SOURCE = '''import unittest
 from unittest.mock import patch
 
@@ -65,6 +107,35 @@ if __name__ == "__main__":
     unittest.main()
 '''
 
+API_TEST_SOURCE = '''import unittest
+from unittest.mock import patch
+
+import order_service
+
+
+class ContractTests(unittest.TestCase):
+    @patch("order_service.create_payment")
+    def test_checkout_accepts_inventory_v2_and_creates_payment(self, create_payment):
+        create_payment.return_value = {"payment": {"id": "pay_test", "payment_code": "TEST"}}
+        result = order_service.checkout("sku-42", 2)
+        self.assertEqual(result["status"], "accepted")
+        self.assertEqual(result["payment"]["payment"]["id"], "pay_test")
+        create_payment.assert_called_once()
+
+    @patch("order_service.create_payment")
+    def test_rejected_checkout_does_not_create_payment(self, create_payment):
+        self.assertEqual(order_service.checkout("sku-42", 20)["status"], "rejected")
+        create_payment.assert_not_called()
+
+    def test_inventory_v1_remains_supported(self):
+        with patch("order_service.get_inventory", return_value={"sku": "legacy", "available_quantity": 4}):
+            self.assertTrue(order_service.can_fulfill("legacy", 4))
+
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+
 
 def _run(repo: Path, args: list[str], timeout: int = 30) -> dict[str, Any]:
     process = subprocess.run(args, cwd=repo, text=True, capture_output=True, timeout=timeout)
@@ -76,13 +147,15 @@ def repo_for(case_id: str) -> Path:
     return LAB_ROOT / case_id / "repo"
 
 
-def prepare_case(case_id: str) -> dict[str, Any]:
+def prepare_case(case_id: str, side_effect_strategy: str = "none") -> dict[str, Any]:
     repo = repo_for(case_id)
     repo.mkdir(parents=True, exist_ok=True)
     (repo / "tests").mkdir(exist_ok=True)
     (repo / "inventory_service.py").write_text(INVENTORY_SOURCE, encoding="utf-8")
     (repo / "order_service.py").write_text(BROKEN_ORDER_SOURCE, encoding="utf-8")
-    (repo / "tests" / "test_contract.py").write_text(TEST_SOURCE, encoding="utf-8")
+    (repo / "payment_gateway.py").write_text(PAYMENT_GATEWAY_SOURCE, encoding="utf-8")
+    test_source = API_TEST_SOURCE if side_effect_strategy != "none" else TEST_SOURCE
+    (repo / "tests" / "test_contract.py").write_text(test_source, encoding="utf-8")
     (repo / "README.md").write_text("# Local checkout contract lab\n\nInventory v2 is live while Order Service still expects v1.\n", encoding="utf-8")
     if not (repo / ".git").exists():
         _run(repo, ["git", "init", "-b", "main"])
@@ -101,6 +174,7 @@ def prepare_case(case_id: str) -> dict[str, Any]:
         "repo": str(repo), "branch": "main", "base_commit": head(case_id),
         "event": {"type": "checkout.contract_failure", "source": "local-order-service", "summary": "Checkout fails after Inventory Service moved to contract v2", "request": {"sku": "sku-42", "quantity": 2}},
         "failure": failure,
+        "side_effect_strategy": side_effect_strategy,
     }
 
 
@@ -123,6 +197,7 @@ def inspect_contract(case_id: str) -> dict[str, Any]:
     return {
         "inventory_service.py": (repo / "inventory_service.py").read_text(encoding="utf-8"),
         "order_service.py": (repo / "order_service.py").read_text(encoding="utf-8"),
+        "payment_gateway.py": (repo / "payment_gateway.py").read_text(encoding="utf-8"),
         "finding": "Inventory returns stock.on_hand/reserved while Order Service reads available_quantity.",
     }
 
@@ -134,6 +209,7 @@ def inspect_code(case_id: str) -> dict[str, Any]:
         "editable_files": ["order_service.py"],
         "order_service.py": (repo / "order_service.py").read_text(encoding="utf-8"),
         "inventory_service.py": (repo / "inventory_service.py").read_text(encoding="utf-8"),
+        "payment_gateway.py": (repo / "payment_gateway.py").read_text(encoding="utf-8"),
         "tests/test_contract.py": (repo / "tests" / "test_contract.py").read_text(encoding="utf-8"),
         "runtime.log": (repo / "runtime.log").read_text(encoding="utf-8"),
     }
@@ -220,14 +296,51 @@ def verify_main(case_id: str) -> dict[str, Any]:
         sys.path.insert(0, str(repo))
         for module in ("order_service", "inventory_service"):
             sys.modules.pop(module, None)
+        previous = os.environ.get("SIGNALROOM_DISABLE_EXTERNAL")
+        os.environ["SIGNALROOM_DISABLE_EXTERNAL"] = "1"
         from order_service import checkout
         response = checkout("sku-42", 2)
     except Exception:
         response = {"status": "error", "traceback": traceback.format_exc()}
     finally:
+        if 'previous' in locals():
+            if previous is None:
+                os.environ.pop("SIGNALROOM_DISABLE_EXTERNAL", None)
+            else:
+                os.environ["SIGNALROOM_DISABLE_EXTERNAL"] = previous
         if str(repo) in sys.path:
             sys.path.remove(str(repo))
     return {
         "success": tests["exit_code"] == 0 and response.get("status") == "accepted",
         "tests": tests, "checkout_response": response, "main_commit": head(case_id),
     }
+
+
+def execute_checkout_with_provider(case_id: str, strategy: str, operation_id: str, payment_code: str, amount_cents: int) -> dict[str, Any]:
+    """Execute the model-authored branch code against the real local provider."""
+    repo = repo_for(case_id)
+    script = (
+        "import json; from order_service import checkout; "
+        "print(json.dumps(checkout('sku-42', 2)))"
+    )
+    env = os.environ.copy()
+    env.update({
+        "SIGNALROOM_DISABLE_EXTERNAL": "0",
+        "SIGNALROOM_SIDE_EFFECT_STRATEGY": strategy,
+        "SIGNALROOM_OPERATION_ID": operation_id,
+        "SIGNALROOM_PAYMENT_CODE": payment_code,
+        "SIGNALROOM_AMOUNT_CENTS": str(amount_cents),
+    })
+    process = subprocess.run(
+        [sys.executable, "-c", script], cwd=repo, text=True, capture_output=True,
+        timeout=15, env=env,
+    )
+    if process.returncode != 0:
+        raise RuntimeError((process.stdout + process.stderr)[-12000:])
+    try:
+        result = json.loads(process.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Repaired checkout did not return JSON: {process.stdout[-2000:]}") from error
+    if result.get("status") != "accepted" or not isinstance(result.get("payment"), dict):
+        raise RuntimeError(f"Repaired checkout did not expose the provider receipt: {result}")
+    return {"checkout": result, "provider_result": result["payment"], "stderr": process.stderr[-4000:]}

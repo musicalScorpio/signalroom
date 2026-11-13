@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from backend.ollama_runtime import selected_ollama_model
+
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB_ROOT = ROOT / "frontend"
@@ -449,7 +451,10 @@ class Engine:
         if os.getenv("SIGNALROOM_MODEL", "rules") != "ollama":
             return None, "transparent-rules"
         endpoint = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/chat")
-        model = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+        try:
+            model = selected_ollama_model()
+        except RuntimeError:
+            return None, "transparent-rules (no local Ollama model found)"
         prompt = "Return JSON only with label, rationale, risk, confidence, reversible, owner. Prefer no action for weak signals. Event: " + json.dumps(event) + ". Context: " + json.dumps(rule["context"])
         request = urllib.request.Request(endpoint, data=json.dumps({"model": model, "stream": False, "format": "json", "messages": [{"role": "user", "content": prompt}], "options": {"temperature": 0.1}}).encode(), headers={"Content-Type": "application/json"})
         try:

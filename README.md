@@ -4,10 +4,21 @@
 
 SignalRoom turns a system signal into supervised, recoverable agent work. Instead of waiting for a person to open a chat, it detects that something changed, assembles evidence, routes bounded agents, pauses for a human decision when risk demands it, and verifies whether the intervention produced the intended outcome.
 
-This repository is a fully local reference implementation built with Temporal, Ollama, Python, SQLite, and Git. It demonstrates a real software-repair workflow—not a scripted animation and not a chatbot wrapped around a model.
+This repository is a fully local reference implementation built with Temporal, Ollama, Python, SQLite, and Git. It demonstrates one unified software-repair and external-effect recovery case—not a scripted animation and not a chatbot wrapped around a model.
 
 ~~~text
 event → context → policy → agent work → human exception → verified outcome → evidence
+~~~
+
+~~~mermaid
+flowchart LR
+    signal[System signal] --> temporal[Temporal history]
+    temporal --> agents[Investigate and repair]
+    agents --> proof[Review and external-effect proof]
+    proof --> human[Human merge gate]
+    human --> outcome[Merge and verified outcome]
+    temporal -. "replay unfinished work after crash" .-> agents
+    temporal -. "restore operation identity and policy" .-> proof
 ~~~
 
 ## Why SignalRoom exists
@@ -32,9 +43,11 @@ The included scenario begins when Inventory Service contract v2 breaks checkout.
 2. Two investigation agents independently reproduce the failure and inspect contract history.
 3. The Repair Agent sends the evidence and bounded repository contents to Ollama, which diagnoses the defect and authors the replacement source.
 4. An Independent Review Agent inspects the exact diff and reruns the tests.
-5. Temporal waits durably for a human to approve the exact commit SHA.
-6. An idempotent Activity merges only the reviewed commit.
-7. An Outcome Verification Agent retests `main` against the original failure.
+5. If an API mode is selected, the Side-Effect Execution Agent runs the exact reviewed branch against the separate local provider.
+6. An optional automatic fault kills the Worker after the provider commits but before Temporal records the Activity result.
+7. Temporal restores the operation identity and selected retry policy on a replacement Worker; the agent retries safely, stops, or reconciles with GET.
+8. Temporal waits durably for a human to approve the exact commit SHA and provider evidence.
+9. An idempotent Activity merges only the reviewed commit, then the Outcome Verification Agent retests `main` without repeating the live side effect.
 
 A case is successful only when the original checkout request succeeds on merged code and the regression suite passes. “The agent finished” is not accepted as a business outcome.
 
@@ -44,45 +57,7 @@ You can kill the Agent Worker at any point. The process loses its in-memory stat
 
 [View the standalone Mermaid source](docs/signalroom-architecture.mmd).
 
-~~~mermaid
-flowchart LR
-    subgraph client ["Operator Surface"]
-        browser["SignalRoom control room"]
-    end
-
-    subgraph gateway ["Local Interface"]
-        http["HTTP and static web server"]
-    end
-
-    subgraph service ["Agent Execution Plane"]
-        api["SignalRoom API and Temporal client"]
-        supervisor["Worker supervisor"]
-        worker["Temporal Worker: orchestrator, five bounded agents, typed Activities, and patch validator"]
-    end
-
-    subgraph async ["Durable Control Plane"]
-        temporal["Temporal Server: Workflow Event History, task queues, retries, and Signals"]
-    end
-
-    subgraph datastore ["Evidence and Artifacts"]
-        sqlite["SQLite operator projection: cases, agents, evidence, and timeline"]
-        gitlab["Per-case Git repair lab: code, tests, branch, commit, and merge"]
-    end
-
-    subgraph external ["Local Model Runtime"]
-        ollama["Ollama: local reasoning and source-code generation"]
-    end
-
-    browser -->|"HTTP actions and live polling"| http
-    http -->|"Routes UI and API requests"| api
-    api -.->|"gRPC: start, query, and Signal"| temporal
-    temporal -.->|"Schedules Workflow and Activity tasks"| worker
-    supervisor -->|"Spawns and respawns the process"| worker
-    api -->|"Reads and writes the UI projection"| sqlite
-    worker -->|"Records agents, evidence, and stages"| sqlite
-    worker -->|"Validates and applies model-authored source"| gitlab
-    worker -.->|"Ollama: inspect, diagnose, author, and iterate"| ollama
-~~~
+The compact diagram above is the operator-level view. The standalone source shows the detailed local runtime, evidence stores, model, Git lab, and provider boundary.
 
 ### What each part owns
 
@@ -96,6 +71,7 @@ flowchart LR
 | SQLite | Fast operator-facing projection of cases, evidence, agents, and timeline | Workflow recovery |
 | Per-case Git lab | Source-of-truth branch, commit, diff, tests, merge, and verification artifacts | Temporal control flow |
 | Worker supervisor | Local process monitoring and respawn | Workflow replay |
+| Demo payment service | Provider-side key replay, deliberately non-idempotent writes, payment records, and request audit | SignalRoom orchestration or Temporal history |
 
 ### How Temporal actually helps
 
@@ -107,11 +83,30 @@ Workers poll that queue. If the active Worker is killed:
 2. The local supervisor starts a replacement Worker process.
 3. The replacement polls the same task queue.
 4. Temporal replays history to reconstruct deterministic Workflow state.
-5. Completed Activities are not repeated; execution resumes at the unfinished durable step.
+5. Activity completions already recorded in Event History are not repeated. If an external write happened but its Activity result was never recorded, Temporal applies the recorded retry policy: retry with the same idempotency key, stop after one attempt, or reconcile with a safe GET.
 
 The supervisor resurrects the process. **Temporal resurrects the work.**
 
-## Five bounded agents
+## Case-bound external-effect proof
+
+The control room includes a separate, demo-only payment service under `third_party_service/`. It runs as another local process and owns `.signalroom/data/third_party.db`; SignalRoom cannot share a transaction with it. The hard-coded payment payload never moves real money.
+
+The **Side-Effect Execution Agent** runs the reviewed application code under a durable policy. Temporal does not make an API idempotent; it restores the same reviewed commit, operation identity, and retry rule after process death. Provider rows remain the authority for whether the external effect exists.
+
+Choose one of four modes before starting the repair case:
+
+| Strategy | Write behavior | Recovery after Worker death |
+| --- | --- | --- |
+| Code repair only | No external API call | Proves model, Git, review, merge, and Worker recovery only |
+| Idempotent API · POST retry | Reviewed checkout code sends POST with one stable operation key | Provider replays the original receipt and creates no duplicate |
+| Non-idempotent API · `maximumAttempts=1` | One total POST attempt and zero write retries | Replacement agent is forbidden from calling create again; it reports an uncertain outcome |
+| Non-idempotent API · zero POST retries + GET recovery | One unsafe POST attempt | Agent suppresses another create, repeats only safe GET checks after 1, 2, and 4 seconds, and adopts the payment it finds |
+
+For API modes, **Auto-kill Worker in result gap** is selected by default. SignalRoom kills the Worker after the provider commits but before Temporal records the Activity result. The same case history then shows the failed process, retained Temporal assignment, replacement Worker, replay decision, request headers, provider rows, and request audit. Manual Worker kill remains available in the header.
+
+A heartbeat is progress evidence, not proof of an external commit. If a provider supports neither a stable idempotency key nor a reliable lookup, SignalRoom stops at `uncertain`; it never claims that client-side state can manufacture exactly-once execution.
+
+## Six bounded agents
 
 Agents are versioned definitions in [backend/agents/definitions.json](backend/agents/definitions.json), not hard-coded personas.
 
@@ -120,6 +115,7 @@ Agents are versioned definitions in [backend/agents/definitions.json](backend/ag
 | Reproduction Agent | Reproduce the failure and establish a factual signature | `tests.reproduce`, `logs.read` |
 | Change Intelligence Agent | Identify contract drift and affected code paths | `contract.inspect`, `git.history` |
 | Repair Agent | Inspect the bounded repository, author source with Ollama, test it, and commit the smallest compatible fix | `code.inspect`, `code.patch`, `tests.run`, `git.commit` |
+| Side-Effect Execution Agent | Execute the reviewed checkout under the selected write/reconciliation policy | `payments.create_idempotent`, `payments.create_once`, `payments.lookup` |
 | Independent Review Agent | Review the exact commit and independently rerun tests | `review.diff`, `tests.run` |
 | Outcome Verification Agent | Verify merged `main` against the original failure | `verify.main` |
 
@@ -146,6 +142,8 @@ There is no fixed solution inside `code.patch`. The repair loop is:
 
 Temporal records every model command and tool result, so a replacement Worker can resume the loop without losing completed evidence.
 
+Local model turns are intentionally concise. `gpt-oss` defaults to low reasoning; read-only turns default to a 512-token output budget and repair generation to 4,096 tokens so there is room for the complete source file. Set `OLLAMA_THINK` or `OLLAMA_NUM_PREDICT` to override those defaults.
+
 ## Human authority and evidence
 
 The human approval is not ceremonial. The UI presents:
@@ -155,7 +153,8 @@ The human approval is not ceremonial. The UI presents:
 - the isolated repair branch;
 - the exact commit SHA and diff;
 - independent review findings;
-- passing test output.
+- passing test output;
+- the selected external-effect policy, provider receipt, replay or reconciliation result, and duplicate count.
 
 Approval is sent to the waiting Workflow as a Temporal Signal. The merge Activity verifies that the approved SHA is still the reviewed SHA before changing `main`. A separate agent then measures the result.
 
@@ -163,7 +162,8 @@ This gives every run a reconstructable record:
 
 ~~~text
 signal → source context → model command → tool evidence → handoff
-       → approval Signal → exact merge → outcome verification
+       → provider proof → recovery decision → approval Signal
+       → exact merge → outcome verification
 ~~~
 
 ## Tech stack
@@ -173,9 +173,10 @@ signal → source context → model command → tool evidence → handoff
 | Control room | Vanilla HTML, CSS, and JavaScript |
 | Local API | Python 3.11 standard-library HTTP server |
 | Durable orchestration | Temporal Server and Temporal Python SDK |
-| Local inference | Ollama with Qwen3, gpt-oss, or another JSON-capable open-weight model |
+| Local inference | Ollama with gpt-oss or another installed JSON-capable open-weight model |
 | Agent runtime | Python harness, versioned JSON definitions, typed tool contracts |
 | Projection store | SQLite |
+| Demo external boundary | Python standard-library HTTP service with a separate SQLite database |
 | Repair environment | Git and Python `unittest` |
 | Local infrastructure | Docker or Colima, `uv`, and pip-compatible requirements |
 | Browser testing | Playwright |
@@ -197,22 +198,25 @@ Everything runs locally. No hosted model or proprietary agent platform is requir
 git clone https://github.com/musicalScorpio/signalroom.git
 cd signalroom
 
-ollama pull qwen3:4b
-OLLAMA_MODEL=qwen3:4b ./scripts/dev.sh
+ollama pull gpt-oss:20b
+./scripts/start.sh
 ~~~
 
-Or use another locally installed model:
+SignalRoom prefers an explicitly configured model when it is installed, then the model currently loaded by Ollama, then the first installed model. To force another locally installed model:
 
 ~~~bash
-OLLAMA_MODEL=gpt-oss:20b ./scripts/dev.sh
+OLLAMA_MODEL=gpt-oss:20b ./scripts/start.sh
 ~~~
 
 Open:
 
 - SignalRoom: [http://127.0.0.1:4173](http://127.0.0.1:4173)
 - Temporal Web UI: [http://127.0.0.1:8233](http://127.0.0.1:8233)
+- Demo third-party API: [http://127.0.0.1:4180/health](http://127.0.0.1:4180/health)
 
-The launcher starts or reuses the Temporal development container, synchronizes Python dependencies, starts the supervised Worker, and serves the API and UI.
+The launcher is the single entry point for the complete local stack. It starts or reuses Docker/Colima, Temporal, and Ollama; synchronizes Python dependencies; initializes both SQLite schemas; starts the separate demo provider, supervised Worker, API, and UI; and waits for every readiness check before reporting success. `./scripts/dev.sh` remains as a backward-compatible alias.
+
+Runtime logs are written under `.signalroom/logs/`. Press `Ctrl+C` in the launcher terminal to stop processes owned by that run. The Temporal container remains online intentionally so its durable history is available on the next start.
 
 Ollama is the reasoning and code-generation layer. If Ollama is unavailable, read-only workflow mechanics can still be exercised in degraded test mode, but the Repair Agent will not create or commit a patch. SignalRoom never substitutes placeholder repair code.
 
@@ -224,18 +228,27 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ~~~
 
-## Run the crash-recovery demonstration
+## Run the unified repair and recovery demonstration
 
-1. Select **Run the repair pipeline**.
-2. Watch the Event-to-Outcome Map advance as the investigation agents work in parallel.
-3. Select **Kill Agent Worker** during any non-terminal stage.
-4. Watch the runtime rail change from Online to Restarting and back to Online with a new PID.
-5. Expand the Worker, Temporal, and SignalRoom recovery entries in the Case Timeline.
-6. At the Human stage, inspect the branch, exact commit, diff, review, and tests.
-7. Select **Merge reviewed commit**.
-8. Wait for the Outcome Verification Agent and the green **Outcome reached** state.
+1. Choose an **External-effect proof** mode. Use **Code repair only** for the base workflow, or one of the three API safety policies to include the provider boundary.
+2. Leave **Auto-kill Worker in result gap** selected for an API mode. The app will create the external effect, then kill the Worker before Temporal receives the Activity result. You can also use the header's **Kill Agent Worker** control at any non-terminal stage.
+3. Select **Run the repair pipeline** once. This is the only start control.
+4. Follow the interactive Event-to-Outcome Map while the investigation, repair, review, and side-effect agents work. Agent cards and the case timeline remain synchronized with the active stage.
+5. Expand tool results, recovery context, and API decisions to inspect the exact prompt/tool contract, generated source, diff, tests, operation identity, request, and provider response.
+6. After a crash, confirm that the timeline records the killed Worker, Temporal's retained assignment, the replacement PID, the restored context, and the policy decision. The case must resume from the unresolved step—not restart from investigation.
+7. For an API mode, compare **Provider truth vs. Temporal knowledge**. This panel refreshes automatically from the provider's separate database.
+8. At the human gate, inspect the exact reviewed commit and all attached evidence, then select **Merge reviewed commit**.
+9. Wait for the Outcome Verification Agent and the green **Outcome reached** state.
 
-The timeline legend is generated from the event types present in the selected case, and every marker uses the same owner color as its legend entry.
+Expected external-effect evidence:
+
+| Mode | Provider audit | Final interpretation |
+| --- | --- | --- |
+| Idempotent API | Two POST requests, one payment row | The retry reused the stable key and the provider replayed the first receipt |
+| `maximumAttempts=1` | One POST request, one payment row | No duplicate is possible, but Temporal honestly reports an uncertain result because the receipt was lost |
+| GET recovery | One POST, then repeatable GET checks, one payment row | The replacement agent suppresses a second create and reconciles provider truth |
+
+Every case receives its own payment code, amount, operation ID, reviewed commit, and durable history. The timeline legend is generated from the event owners present in that case, and each marker uses the same color as its legend entry.
 
 ## Tests
 
@@ -252,7 +265,7 @@ Run the unit, integration, and Playwright suites:
 ./scripts/test.sh
 ~~~
 
-Coverage includes agent contracts, model-required repair enforcement, guarded model-authored patches, SQLite projections, real Git repair and merge behavior, HTTP-to-Temporal handoff, Worker recovery reconciliation, live runtime health, durable payload disclosures, responsive timeline layout, owner-color legends, and the crash control.
+Coverage includes agent contracts, model-required repair enforcement, guarded model-authored patches, SQLite projections, real Git repair and merge behavior, HTTP-to-Temporal handoff, Worker recovery reconciliation, provider-side key replay, payload conflict detection, deliberate duplicate creation, side-effect policy definitions, live runtime health, responsive timelines, provider evidence rendering, and both manual and automatic crash controls.
 
 ## Inspect local state
 
@@ -282,6 +295,24 @@ Open [http://127.0.0.1:8233](http://127.0.0.1:8233), select the `default` namesp
 
 Temporal Event History is the authoritative recovery record. SQLite is intentionally a separate, readable UI projection.
 
+### Demo provider state
+
+~~~bash
+sqlite3 .signalroom/data/third_party.db
+~~~
+
+~~~sql
+SELECT id, payment_code, route, amount_cents, created_at
+FROM payments
+ORDER BY created_at DESC;
+
+SELECT method, route, outcome, payment_id, idempotency_key
+FROM request_audit
+ORDER BY id DESC;
+~~~
+
+The provider database is deliberately separate from SignalRoom's projection database. This preserves the failure boundary where an external write can succeed before Temporal receives the Activity result.
+
 ## API
 
 | Method | Path | Purpose |
@@ -290,7 +321,8 @@ Temporal Event History is the authoritative recovery record. SQLite is intention
 | `GET` | `/api/agent-definitions` | Active bounded agent definitions |
 | `GET` | `/api/cases` | Case summaries |
 | `GET` | `/api/cases/:id` | Full case, agents, evidence, and timeline projection |
-| `POST` | `/api/lab/run` | Prepare the repair lab and start the parent Workflow |
+| `GET` | `/api/reliability/provider` | Read-only payment rows and provider request audit for the selected case |
+| `POST` | `/api/lab/run` | Start the unified repair Workflow; accepts `side_effect_strategy` and `auto_crash` |
 | `POST` | `/api/demo/worker/crash` | Kill only the supervised Worker process |
 | `POST` | `/api/cases/:id/approve-merge` | Signal approval for the exact reviewed commit |
 | `POST` | `/api/cases/:id/reject-merge` | Signal rejection and close the case |
@@ -301,16 +333,21 @@ Temporal Event History is the authoritative recovery record. SQLite is intention
 signalroom/
 ├── backend/
 │   ├── api/                     HTTP API and Temporal bridge
-│   ├── agents/                  Definitions, Ollama harness, and scoped tools
-│   ├── orchestration/           Parent and child Workflows plus Activities
+│   ├── agents/                  Definitions, model integration, and scoped tools
+│   ├── orchestration/           Unified repair, side-effect, and verification Workflows
+│   ├── reliability/             Backward-compatible policy harness and provider client
 │   ├── runtime/                 Worker, supervisor, and process state
 │   ├── storage/                 SQLite case projection
 │   └── legacy/                  Generic event-to-outcome demonstration
 ├── frontend/                    Control room, styling, JavaScript, and essay
 ├── docs/                        Architecture diagram source
 ├── infra/                       Local Temporal Compose configuration
-├── scripts/                     Development and test launchers
+├── scripts/
+│   ├── start.sh                Complete local-stack launcher and readiness checks
+│   ├── dev.sh                  Backward-compatible alias for start.sh
+│   └── test.sh                 Unit, integration, and browser test launcher
 ├── tests/                       Unit, integration, and Playwright suites
+├── third_party_service/         Demo-only payment API and independent SQLite store
 ├── BLOG.md                      Companion essay
 ├── requirements.txt             Pinned runtime dependencies
 └── pyproject.toml
@@ -327,15 +364,18 @@ Generated runtime data lives under `.signalroom/` and is excluded from Git.
 - Only allowlisted tools can produce evidence or mutate the repair lab.
 - The Review Agent cannot edit code.
 - Human approval names an immutable commit, not a vague recommendation.
+- Any selected external-effect proof runs against that reviewed commit before the human merge gate.
 - Merge and verification are separate stages.
+- Post-merge outcome verification never repeats the live provider write.
 - The synthetic per-case repository is isolated from the SignalRoom source repository.
 - The Worker supervisor demonstrates process recovery; Temporal supplies Workflow recovery.
+- Native idempotency is enforced by the provider, not by Temporal.
+- A non-idempotent write with no reliable lookup is at-most-once and potentially uncertain; SignalRoom does not blindly retry it.
 
 ## Open-source stack
 
 - SignalRoom: Apache License 2.0
 - Temporal Server and Python SDK: MIT
-- Qwen3: Apache License 2.0
 - gpt-oss: Apache License 2.0
 - Ollama: MIT
 - SQLite: public domain
